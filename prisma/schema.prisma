@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model College {
+  id         String @id @default(ulid())
+  name       String
+  email      String
+  state      String
+  country    String
+  isVerified Boolean
+
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  Order      Order[]
+  Stationary Stationary[]
+  users      User[]
+}
+
+model Stationary {
+  id          String   @id @default(ulid())
+  name        String
+  email       String
+  countryCode String
+  phone       String
+  isActive    Boolean
+  canDeliver  Boolean
+  address     String
+  collegeId   String
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  Order       Order[]
+  college     College  @relation(fields: [collegeId], references: [id])
+  owner       User     @relation(fields: [ownerId], references: [id])
+}
+
+model User {
+  id          String       @id @default(ulid())
+  name        String
+  email       String       @unique
+  countryCode String
+  phone       String       @unique
+  password    String
+  isVerified  Boolean
+  role        UserRole
+  collegeId   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  Cart        Cart[]
+  Orders      Order[]
+  Stationary  Stationary[]
+  college     College      @relation(fields: [collegeId], references: [id])
+}
+
+model Cart {
+  id        String     @id @default(ulid())
+  userId    String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  user      User       @relation(fields: [userId], references: [id])
+  cartItems CartItem[]
+  Order     Order[]
+}
+
+model CartItem {
+  id        String      @id @default(ulid())
+  name      String
+  fileUrl   String
+  coloured  Boolean
+  duplex    Boolean
+  spiral    Boolean
+  hardbind  Boolean
+  quantity  Int
+  price     Int
+  fileType  String
+  cartId    String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  Cart      Cart?       @relation(fields: [cartId], references: [id])
+  OrderItem OrderItem[]
+}
+
+model Order {
+  id              String      @id @default(ulid())
+  userId          String
+  collegeId       String
+  stationaryId    String
+  status          String
+  totalPrice      Int
+  otp             String
+  orderType       OrderType
+  deliveryAddress String?
+  deliveryFee     Int?
+  cartId          String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  Cart            Cart?       @relation(fields: [cartId], references: [id])
+  college         College     @relation(fields: [collegeId], references: [id])
+  stationary      Stationary  @relation(fields: [stationaryId], references: [id])
+  user            User        @relation(fields: [userId], references: [id])
+  OrderItem       OrderItem[]
+}
+
+model OrderItem {
+  id         String    @id @default(ulid())
+  name       String
+  fileUrl    String
+  coloured   Boolean
+  duplex     Boolean
+  spiral     Boolean
+  hardbind   Boolean
+  quantity   Int
+  price      Int
+  fileType   String
+  orderId    String
+  cartItemId String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  CartItem   CartItem? @relation(fields: [cartItemId], references: [id])
+  order      Order     @relation(fields: [orderId], references: [id])
+}
+
+enum UserRole {
+  SUPERADMIN
+  CUSTOMER
+  STATIONARY_OWNER
+}
+
+enum OrderType {
+  DELIVERY
+  TAKEAWAY
+}
