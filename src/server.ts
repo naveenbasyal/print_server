@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import db from "./db/database";
+import indexRoutes from "./routes/index";
 
 dotenv.config();
 
@@ -22,6 +23,8 @@ app.all("/", (req, res) => {
     message: "Server Running",
   });
 });
+
+app.use("/api", indexRoutes);
 
 async function startServer() {
   try {
