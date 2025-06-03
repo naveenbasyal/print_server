@@ -5,19 +5,19 @@ declare global {
   var _prisma: PrismaClient | undefined;
 }
 
-const prisma =
+const db =
   global._prisma ??
   new PrismaClient({
     log: ["query", "info", "warn", "error"],
   });
 
-if (process.env.NODE_ENV !== "production") global._prisma = prisma;
+if (process.env.NODE_ENV !== "production") global._prisma = db;
 
 // Optional safety: disconnect when process exits
 process.on("SIGINT", async () => {
-  await prisma.$disconnect();
+  await db.$disconnect();
   process.exit(0);
 });
 
-export default prisma;
+export default db;
 
