@@ -1,4 +1,6 @@
-import resend from "resend";
+import { Resend } from "resend";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const sendEmail = async (
   recipientEmail: string,
@@ -6,12 +8,8 @@ const sendEmail = async (
   content: string
 ): Promise<boolean> => {
   try {
-    const { Resend } = resend;
-
-    const api = new Resend(process.env.RESEND_API_KEY);
-
-    const data = await api.emails.send({
-      from: "Acme <onboarding@resend.dev>",
+    const data = await resend.emails.send({
+      from: "Printify <onboarding@resend.dev>",
       to: recipientEmail,
       subject: subject,
       html: content,
@@ -44,6 +42,7 @@ const sendOTPEmail = async (
     `;
 
   const success = await sendEmail(email, subject, content);
+  console.log("success", success);
 
   return {
     success,

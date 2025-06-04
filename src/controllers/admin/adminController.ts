@@ -45,7 +45,7 @@ export const getColleges = async (req: any, res: any) => {
       orderBy: {
         createdAt: "desc",
       },
-    })
+    });
     return res.status(200).json({
       message: "Colleges retrieved successfully",
       data: colleges,
@@ -70,6 +70,7 @@ export const registerStationaryOwner = async (req: any, res: any) => {
     if (ownerExists) {
       return res.status(400).json({
         message: "Owner already exists",
+        success: false,
       });
     }
     const collegeExists = await db.college.findUnique({
@@ -80,6 +81,7 @@ export const registerStationaryOwner = async (req: any, res: any) => {
     if (!collegeExists) {
       return res.status(400).json({
         message: "College does not exist",
+        success: false,
       });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -87,6 +89,7 @@ export const registerStationaryOwner = async (req: any, res: any) => {
     if (!hashedPassword) {
       return res.status(500).json({
         message: "Error hashing password",
+        success: false,
       });
     }
     const newOwner = await db.user.create({
@@ -105,11 +108,14 @@ export const registerStationaryOwner = async (req: any, res: any) => {
     return res.status(201).json({
       message: "Stationary owner registered successfully",
       data: newOwner,
+      success: true,
     });
   } catch (error) {
     console.error("Error registering stationary owner:", error);
     return res.status(500).json({
       message: "Internal server error",
+      success: false,
+
       error: error instanceof Error ? error.message : "Unknown error",
     });
   }
