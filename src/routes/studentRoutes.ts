@@ -13,6 +13,7 @@ import {
   deleteCartItem,
   getCartItems,
 } from "../controllers/student/cartController";
+import { createOrder } from "../controllers/student/orderController";
 
 const router = express.Router();
 const upload = multer();
@@ -24,5 +25,6 @@ router.get("/find-colleges", requireUser, findColleges);
 router.post("/upload", requireUser, upload.array("files"), addCartItem);
 router.get("/cart", requireUser, getCartItems);
 router.delete("/cart/:itemId", requireUser, deleteCartItem);
+router.post("/create-order", requireUser, createOrder);
 
 export default router;

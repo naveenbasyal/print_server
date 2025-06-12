@@ -36,7 +36,9 @@ export const requireStationaryOwner = (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
+    return res
+      .status(401)
+      .json({ message: "No token provided", success: false });
   }
 
   const token = authHeader.split(" ")[1];
@@ -49,7 +51,7 @@ export const requireStationaryOwner = (req: any, res: any, next: any) => {
     };
 
     if (decoded.role !== "STATIONARY_OWNER") {
-      return res.status(403).json({ message: "Access denied" });
+      return res.status(403).json({ message: "Access denied", success: false });
     }
 
     req.user = {
@@ -60,7 +62,7 @@ export const requireStationaryOwner = (req: any, res: any, next: any) => {
 
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Invalid token" });
+    return res.status(401).json({ message: "Invalid token", success: false });
   }
 };
 
@@ -92,6 +94,6 @@ export const requireAdmin = (req: any, res: any, next: any) => {
 
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Invalid token" });
+    return res.status(401).json({ message: "Invalid token", success: false });
   }
 };

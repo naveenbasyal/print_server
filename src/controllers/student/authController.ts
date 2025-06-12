@@ -35,6 +35,8 @@ export const registerStudent = async (req: any, res: any) => {
         message: "Student already exists, please login",
       });
     } else if (studentExists && !studentExists.isVerified) {
+      const result = await sendOTPEmail(email, name);
+      console.log("result", result);
       return res.status(400).json({
         success: false,
         message: "Student already exists, please verify your account",
@@ -55,7 +57,7 @@ export const registerStudent = async (req: any, res: any) => {
       },
     });
 
-    const sendOtp = await sendOTPEmail(email);
+    const sendOtp = await sendOTPEmail(email, name);
 
     if (sendOtp && sendOtp.success) {
       if (sendOtp.otp) {
@@ -207,7 +209,7 @@ export const loginStudent = async (req: any, res: any) => {
       });
     }
     if (!student.isVerified) {
-      await sendOTPEmail(email);
+      await sendOTPEmail(email, student?.name);
       return res.status(400).json({
         success: false,
 

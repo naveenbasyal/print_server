@@ -94,8 +94,9 @@ model Order {
   userId          String
   collegeId       String
   stationaryId    String
-  status          String
+  status          OrderStatus 
   totalPrice      Int
+  paymentId       String
   otp             String
   orderType       OrderType
   deliveryAddress String?
@@ -110,6 +111,13 @@ model Order {
   OrderItem       OrderItem[]
 }
 
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
 model OrderItem {
   id         String    @id @default(ulid())
   name       String
