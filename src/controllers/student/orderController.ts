@@ -1,17 +1,15 @@
 import { ulid } from "ulid";
 import db from "../../db/database";
+import { deleteFromCloudinary } from "../../services/cloudinaryService";
+import {
+  handlePaymentSuccess,
+  initiatePayment,
+} from "../../services/paymentService";
 
 export const createOrder = async (req: any, res: any) => {
   const userId = req?.user?.id;
   try {
-    const { paymentId, stationaryId, orderType, deliveryAddress } = req.body;
-
-    if (!paymentId || !stationaryId) {
-      return res.status(400).json({
-        message: "Required data: paymentId & stationaryId",
-        success: false,
-      });
-    }
+    const { stationaryId, orderType, deliveryAddress } = req.body;
 
     if (orderType === "DELIVERY" && !deliveryAddress) {
       return res.status(400).json({
@@ -50,6 +48,7 @@ export const createOrder = async (req: any, res: any) => {
         .status(404)
         .json({ message: "User not found.", success: false });
     }
+
     const stationary = await db.stationary.findFirst({
       where: {
         id: stationaryId,
@@ -78,18 +77,18 @@ export const createOrder = async (req: any, res: any) => {
 
     // generate otp
     const otp = Math.floor(100000 + Math.random() * 900000);
+    const totalAmount = cartItems
+      .map((item) => item.price)
+      .reduce((acc, price) => acc + price, 0);
 
     const newOrder = await db.order.create({
       data: {
         id: ulid(),
         userId,
-        paymentId,
         collegeId: user?.collegeId,
         cartId: cart?.id,
         status: "PENDING",
-        totalPrice: cartItems
-          .map((item) => item.price)
-          .reduce((acc, price) => acc + price, 0),
+        totalPrice: totalAmount,
         stationaryId: stationaryId,
         otp: otp.toString(),
         orderType: orderType,
@@ -114,6 +113,16 @@ export const createOrder = async (req: any, res: any) => {
     const newOrderItems = await db.orderItem.createMany({
       data: orderItemData,
     });
+    const newPayment = await initiatePayment(totalAmount, userId, newOrder.id);
+
+    await db.payments.create({
+      data: {
+        id: ulid(),
+        orderId: newOrder.id,
+        status: "PENDING",
+        transactionId: newPayment.order.id,
+      },
+    });
 
     //delete the cartitems
 
@@ -122,13 +131,17 @@ export const createOrder = async (req: any, res: any) => {
         cartId: cart.id,
       },
     });
-    // TODO: delete fiels from cloudinary also using fileid present in cartItem table
+
+    // TODO: delete files from cloudinary also using fileid present in cartItem table -baadme krega stationary owner jab completed kar deaga
+
+    //initiate payment
 
     return res.status(201).json({
       success: true,
       message: "Order created successfully",
       data: {
         newOrder,
+        newPayment,
         newOrderItems,
       },
     });
@@ -137,5 +150,74 @@ export const createOrder = async (req: any, res: any) => {
     return res
       .status(500)
       .json({ success: false, message: "Internal server error", error });
+  }
+};
+
+export const verifyPayment = async (req: any, res: any) => {
+  const userId = req.user.id;
+
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+  try {
+    const verification = await handlePaymentSuccess(
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature
+    );
+    console.log("verification", verification);
+
+    if (verification.data?.status === "captured") {
+      //payment ka status
+      const payment = await db.payments.findFirst({
+        where: {
+          transactionId: razorpayOrderId,
+        },
+      });
+      if (!payment) {
+        return res.status(400).json({
+          success: false,
+          message: "Payment not found",
+        });
+      }
+      await db.payments.update({
+        where: { id: payment.id },
+        data: {
+          status: "PAID",
+          paymentId: razorpayPaymentId,
+        },
+      });
+      //order ka status change krna to ACCEPTED
+      const order = await db.order.findFirst({
+        where: {
+          id: payment.orderId,
+          userId,
+        },
+      });
+      if (!order) {
+        return res.status(400).json({
+          success: false,
+          message: "Order not found",
+        });
+      }
+      await db.order.update({
+        where: {
+          id: order.id,
+        },
+        data: {
+          status: "ACCEPTED",
+          paymentId:verification.data.id,
+        },
+      });
+    }
+    return res.status(verification?.success ? 200 : 400).json({
+      success: verification.success,
+      message: verification.message,
+    });
+  } catch (error: any) {
+    console.error("Error verifying payment:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
   }
 };

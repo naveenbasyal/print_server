@@ -58,6 +58,7 @@ export const registerStudent = async (req: any, res: any) => {
     });
 
     const sendOtp = await sendOTPEmail(email, name);
+    console.log("send otp ", sendOtp);
 
     if (sendOtp && sendOtp.success) {
       if (sendOtp.otp) {

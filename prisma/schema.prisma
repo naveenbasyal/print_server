@@ -94,9 +94,9 @@ model Order {
   userId          String
   collegeId       String
   stationaryId    String
-  status          OrderStatus 
+  status          OrderStatus
   totalPrice      Int
-  paymentId       String
+  paymentId       String?
   otp             String
   orderType       OrderType
   deliveryAddress String?
@@ -109,6 +109,7 @@ model Order {
   stationary      Stationary  @relation(fields: [stationaryId], references: [id])
   user            User        @relation(fields: [userId], references: [id])
   OrderItem       OrderItem[]
+  Payments        Payments[]
 }
 
 enum OrderStatus {
@@ -118,6 +119,7 @@ enum OrderStatus {
   COMPLETED
   CANCELLED
 }
+
 model OrderItem {
   id         String    @id @default(ulid())
   name       String
@@ -135,6 +137,24 @@ model OrderItem {
   updatedAt  DateTime  @updatedAt
   CartItem   CartItem? @relation(fields: [cartItemId], references: [id])
   order      Order     @relation(fields: [orderId], references: [id])
+}
+
+model Payments {
+  id            String        @id @default(ulid())
+  transactionId String?
+  paymentId     String?
+  description   String?
+  status        PaymentStatus
+  orderId       String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  order         Order         @relation(fields: [orderId], references: [id])
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
 }
 
 enum UserRole {
