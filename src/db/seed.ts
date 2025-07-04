@@ -195,6 +195,7 @@ async function seed() {
       await Promise.all(
         cartItems.map((item) =>
           db.cartItem.create({
+            // @ts-ignore
             data: {
               ...item,
               cartId: cart.id,

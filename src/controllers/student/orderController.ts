@@ -204,7 +204,7 @@ export const verifyPayment = async (req: any, res: any) => {
         },
         data: {
           status: "ACCEPTED",
-          paymentId:verification.data.id,
+          paymentId: verification.data.id,
         },
       });
     }
@@ -218,6 +218,35 @@ export const verifyPayment = async (req: any, res: any) => {
       success: false,
       message: "Internal server error",
       error: error.message,
+    });
+  }
+};
+
+export const getOrders = async (req: any, res: any) => {
+  const userId = req.user.id;
+  try {
+    const orders = await db.order.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        OrderItem: true,
+        stationary: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: orders,
+    });
+  } catch (error) {
+    console.error("Error fetching orders:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
     });
   }
 };

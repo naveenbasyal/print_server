@@ -116,8 +116,16 @@ enum OrderStatus {
   PENDING
   ACCEPTED
   IN_PROGRESS
-  COMPLETED
   CANCELLED
+
+  //TAKEAWAY
+  COMPLETED
+
+  //Delivery status
+  OUT_FOR_DELIVERY
+
+  // FINAL STATUS
+  DELIVERED
 }
 
 model OrderItem {

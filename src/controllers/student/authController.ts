@@ -293,3 +293,153 @@ export const findColleges = async (req: any, res: any) => {
     });
   }
 };
+
+export const getStudentProfile = async (req: any, res: any) => {
+  const userId = req.user.id;
+
+  try {
+    const student = await db.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        countryCode: true,
+
+        college: {
+          select: {
+            id: true,
+            name: true,
+            country: true,
+            state: true,
+          },
+        },
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+
+        message: "Student not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      message: "Student profile retrieved successfully",
+      data: student,
+    });
+  } catch (error) {
+    console.error("Error retrieving student profile:", error);
+    return res.status(500).json({
+      success: false,
+
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
+
+export const updateStudentProfile = async (req: any, res: any) => {
+  const userId = req.user.id;
+  const { name } = req.body;
+
+  try {
+    const student = await db.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const updatedStudent = await db.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        name,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Student profile updated successfully",
+      data: updatedStudent,
+    });
+  } catch (error) {
+    console.error("Error updating student profile:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
+
+export const changeStudentPassword = async (req: any, res: any) => {
+  const userId = req.user.id;
+  const { currentPassword, newPassword } = req.body;
+
+  try {
+    const student = await db.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const matchCurrentPassword = await bcrypt.compare(
+      currentPassword,
+      student.password || ""
+    );
+    if (!matchCurrentPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Old password is incorrect",
+      });
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    const updatedStudent = await db.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        password: hashedNewPassword,
+      },
+    });
+
+    const { password, ...rest } = updatedStudent;
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully",
+      data: rest,
+    });
+  } catch (error) {
+    console.error("Error changing student password:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
