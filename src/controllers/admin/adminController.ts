@@ -1,7 +1,72 @@
 import { ulid } from "ulid";
 import db from "../../db/database";
 import bcrypt from "bcrypt";
+import { generateToken } from "../../services/jwtService";
 
+export const adminLogin = async (req: any, res: any) => {
+  const { email, password } = req.body;
+  try {
+    const staff = await db.staff.findFirst({
+      where: {
+        email: email,
+        role: "ADMIN",
+      },
+    });
+    if (!staff) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      if (!hashedPassword) {
+        return res.status(500).json({
+          message: "Error hashing password",
+          success: false,
+        });
+      }
+      const newStaff = await db.staff.create({
+        data: {
+          id: ulid(),
+          name: "jetha",
+          email: email,
+          password: hashedPassword,
+          role: "ADMIN",
+        },
+      });
+      const token = generateToken(newStaff.id, newStaff.email, "ADMIN");
+      return res.status(201).json({
+        success: true,
+        message: "Staff created successfully",
+        data: {
+          userId: newStaff.id,
+          email: newStaff.email,
+          token: token,
+        },
+      });
+    }
+    const isPasswordValid = await bcrypt.compare(password, staff.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        message: "Invalid password",
+        success: false,
+      });
+    }
+    const token = generateToken(staff.id, staff.email, "ADMIN");
+    return res.status(200).json({
+      success: true,
+
+      message: "Login successful",
+      data: {
+        userId: staff.id,
+        email: staff.email,
+        token: token,
+      },
+    });
+  } catch (error) {
+    console.error("Error during admin login:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
 export const registerCollege = async (req: any, res: any) => {
   const { name, email, state, country, isVerified } = req.body;
 
@@ -132,6 +197,11 @@ export const registerStationary = async (req: any, res: any) => {
     canDeliver,
     address,
     ownerId,
+    colorRate,
+    bwRate,
+    duplexExtra,
+    hardbindRate,
+    spiralRate,
   } = req.body;
   try {
     const stationaryExists = await db.stationary.findFirst({
@@ -178,6 +248,21 @@ export const registerStationary = async (req: any, res: any) => {
         ownerId,
       },
     });
+
+    if (newStationary) {
+      console.log("andr hu");
+      await db.printingRates.create({
+        data: {
+          id: ulid(),
+          stationaryId: newStationary.id,
+          colorRate,
+          bwRate,
+          duplexExtra,
+          hardbindRate,
+          spiralRate,
+        },
+      });
+    }
     return res.status(201).json({
       message: "Stationary registered successfully",
       data: newStationary,

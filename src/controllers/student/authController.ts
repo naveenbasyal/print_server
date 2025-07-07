@@ -3,8 +3,17 @@ import db from "../../db/database";
 import bcrypt from "bcrypt";
 import { sendEmail, sendOTPEmail } from "../../services/emailServices";
 import { generateToken } from "../../services/jwtService";
+import {
+  sendSuccessResponse,
+  sendValidationError,
+  sendNotFoundError,
+  sendInternalServerError,
+  handleAsyncError,
+  HttpStatus,
+} from "../../utils/responseFormatter";
+import { asyncHandler } from "../../utils/asyncHandler";
 
-export const registerStudent = async (req: any, res: any) => {
+export const registerStudent = asyncHandler(async (req: any, res: any) => {
   const { name, email, password, collegeId } = req.body;
 
   try {
@@ -22,90 +31,79 @@ export const registerStudent = async (req: any, res: any) => {
     ]);
 
     if (!collegeExists) {
-      return res.status(400).json({
-        success: false,
-
-        message: "College does not exist",
-      });
+      return sendValidationError(res, "College does not exist");
     }
-    if (studentExists && studentExists.isVerified) {
-      return res.status(400).json({
-        success: false,
 
-        message: "Student already exists, please login",
-      });
+    if (studentExists && studentExists.isVerified) {
+      return sendValidationError(res, "Student already exists, please login");
     } else if (studentExists && !studentExists.isVerified) {
       const result = await sendOTPEmail(email, name);
       console.log("result", result);
-      return res.status(400).json({
-        success: false,
-        message: "Student already exists, please verify your account",
-      });
+      return sendValidationError(
+        res,
+        "Student already exists, please verify your account"
+      );
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newStudent = await db.user.create({
-      data: {
-        id: ulid(),
-        name,
-        email,
-        password: hashedPassword,
-        collegeId,
-        role: "CUSTOMER",
-        isVerified: false,
-      },
-    });
-
-    const sendOtp = await sendOTPEmail(email, name);
-    console.log("send otp ", sendOtp);
-
-    if (sendOtp && sendOtp.success) {
-      if (sendOtp.otp) {
-        await db.verificationOtp.create({
-          data: {
-            id: ulid(),
-            userId: newStudent.id,
-            otp: sendOtp.otp,
-            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-          },
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "OTP sent to your email, Please verify your account",
+    const result = await db.$transaction(async (tx) => {
+      const newStudent = await tx.user.create({
         data: {
-          userId: newStudent.id,
-          email: newStudent.email,
+          id: ulid(),
+          name,
+          email,
+          password: hashedPassword,
+          collegeId,
+          role: "CUSTOMER",
+          isVerified: false,
         },
       });
-    } else {
-      return res.status(500).json({
-        success: false,
-        message: "Failed to send OTP, please try again later",
-        data: sendOtp,
+
+      const sendOtp = await sendOTPEmail(email, name);
+      if (!sendOtp.success || !sendOtp.otp) {
+        throw new Error("Failed to send OTP, please try again later");
+      }
+
+      await tx.verificationOtp.create({
+        data: {
+          id: ulid(),
+          userId: newStudent.id,
+          otp: sendOtp.otp,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
       });
-    }
-  } catch (error) {
-    console.error("Error registering student:", error);
-    return res.status(500).json({
-      message: "Internal server error",
-      success: false,
 
-      error: error instanceof Error ? error.message : "Unknown error",
+      return {
+        success: true,
+        userId: newStudent.id,
+        email: newStudent.email,
+      };
     });
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "OTP sent to your email, Please verify your account",
+      {
+        userId: result.userId,
+        email: result.email,
+      }
+    );
+  } catch (error: any) {
+    return handleAsyncError(
+      res,
+      error,
+      error.message || "Error registering student"
+    );
   }
-};
+});
 
-export const verifyOtp = async (req: any, res: any) => {
+export const verifyOtp = asyncHandler(async (req: any, res: any) => {
   const { userId, otp } = req.body;
-  if (!userId || !otp) {
-    return res.status(400).json({
-      success: false,
 
-      message: "User ID and OTP are required",
-    });
+  if (!userId || !otp) {
+    return sendValidationError(res, "User ID and OTP are required");
   }
 
   try {
@@ -118,19 +116,13 @@ export const verifyOtp = async (req: any, res: any) => {
         isVerified: true,
       },
     });
+
     if (!user) {
-      return res.status(404).json({
-        success: false,
-
-        message: "User not found",
-      });
+      return sendNotFoundError(res, "User not found");
     }
-    if (user?.isVerified) {
-      return res.status(400).json({
-        success: false,
 
-        message: "User is already verified",
-      });
+    if (user?.isVerified) {
+      return sendValidationError(res, "User is already verified");
     }
 
     const verificationOtp = await db.verificationOtp.findFirst({
@@ -144,11 +136,7 @@ export const verifyOtp = async (req: any, res: any) => {
     });
 
     if (!verificationOtp) {
-      return res.status(400).json({
-        success: false,
-
-        message: "Invalid or expired OTP",
-      });
+      return sendValidationError(res, "Invalid or expired OTP");
     }
 
     await db.user.update({
@@ -167,34 +155,29 @@ export const verifyOtp = async (req: any, res: any) => {
     });
 
     const token = generateToken(userId, user.email, "CUSTOMER");
-    return res.status(200).json({
-      message: "OTP verified successfully",
-      data: {
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "OTP verified successfully",
+      {
         userId: userId,
         email: user.email,
         token: token,
-      },
-      success: true,
-    });
-  } catch (error: unknown) {
-    console.error("Error verifying OTP:", error);
-    return res.status(500).json({
-      message: "Internal server error",
-      success: false,
-
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+      }
+    );
+  } catch (error) {
+    return handleAsyncError(res, error, "Error verifying OTP");
   }
-};
+});
 
-export const loginStudent = async (req: any, res: any) => {
+export const loginStudent = asyncHandler(async (req: any, res: any) => {
   const { email, password } = req.body;
+
   if (!email || !password) {
-    return res.status(400).json({
-      success: false,
-      message: "Email and password are required",
-    });
+    return sendValidationError(res, "Email and password are required");
   }
+
   try {
     const student = await db.user.findFirst({
       where: {
@@ -202,62 +185,45 @@ export const loginStudent = async (req: any, res: any) => {
         role: "CUSTOMER",
       },
     });
-    if (!student) {
-      return res.status(400).json({
-        success: false,
 
-        message: "Invalid email or password",
-      });
+    if (!student) {
+      return sendValidationError(res, "Invalid email or password");
     }
+
     if (!student.isVerified) {
       await sendOTPEmail(email, student?.name);
-      return res.status(400).json({
-        success: false,
-
-        message:
-          "Your account is not verified, please check your email for the OTP",
-      });
+      return sendValidationError(
+        res,
+        "Your account is not verified, please check your email for the OTP"
+      );
     }
+
     const matchPassword = await bcrypt.compare(
       password,
       student?.password || ""
     );
+
     if (!matchPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid email or password",
-      });
+      return sendValidationError(res, "Invalid email or password");
     }
+
     const token = generateToken(student.id, student.email, "CUSTOMER");
-    return res.status(200).json({
-      success: true,
 
-      message: "Login successful",
-      data: {
-        userId: student.id,
-        email: student.email,
-        token: token,
-      },
+    return sendSuccessResponse(res, HttpStatus.OK, "Login successful", {
+      userId: student.id,
+      email: student.email,
+      token: token,
     });
-  } catch (error: unknown) {
-    console.error("Error logging in student:", error);
-    return res.status(500).json({
-      success: false,
-
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+  } catch (error) {
+    return handleAsyncError(res, error, "Error logging in student");
   }
-};
+});
 
-export const findColleges = async (req: any, res: any) => {
+export const findColleges = asyncHandler(async (req: any, res: any) => {
   const { country, state } = req.query;
-  if (!country || !state) {
-    return res.status(400).json({
-      success: false,
 
-      message: "Country and state are required",
-    });
+  if (!country || !state) {
+    return sendValidationError(res, "Country and state are required");
   }
 
   try {
@@ -277,24 +243,18 @@ export const findColleges = async (req: any, res: any) => {
       },
     });
 
-    return res.status(200).json({
-      success: true,
-
-      message: "Colleges retrieved successfully",
-      data: colleges,
-    });
-  } catch (error: unknown) {
-    console.error("Error retrieving colleges:", error);
-    return res.status(500).json({
-      success: false,
-
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Colleges retrieved successfully",
+      colleges
+    );
+  } catch (error) {
+    return handleAsyncError(res, error, "Error retrieving colleges");
   }
-};
+});
 
-export const getStudentProfile = async (req: any, res: any) => {
+export const getStudentProfile = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
 
   try {
@@ -308,44 +268,34 @@ export const getStudentProfile = async (req: any, res: any) => {
         email: true,
         phone: true,
         countryCode: true,
-
         college: {
           select: {
             id: true,
             name: true,
             country: true,
             state: true,
+            Stationary: true,
           },
         },
       },
     });
 
     if (!student) {
-      return res.status(404).json({
-        success: false,
-
-        message: "Student not found",
-      });
+      return sendNotFoundError(res, "Student not found");
     }
 
-    return res.status(200).json({
-      success: true,
-
-      message: "Student profile retrieved successfully",
-      data: student,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Student profile retrieved successfully",
+      student
+    );
   } catch (error) {
-    console.error("Error retrieving student profile:", error);
-    return res.status(500).json({
-      success: false,
-
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error retrieving student profile");
   }
-};
+});
 
-export const updateStudentProfile = async (req: any, res: any) => {
+export const updateStudentProfile = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
   const { name } = req.body;
 
@@ -357,10 +307,7 @@ export const updateStudentProfile = async (req: any, res: any) => {
     });
 
     if (!student) {
-      return res.status(404).json({
-        success: false,
-        message: "Student not found",
-      });
+      return sendNotFoundError(res, "Student not found");
     }
 
     const updatedStudent = await db.user.update({
@@ -372,74 +319,144 @@ export const updateStudentProfile = async (req: any, res: any) => {
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Student profile updated successfully",
-      data: updatedStudent,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Student profile updated successfully",
+      updatedStudent
+    );
   } catch (error) {
-    console.error("Error updating student profile:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error updating student profile");
   }
-};
+});
 
-export const changeStudentPassword = async (req: any, res: any) => {
-  const userId = req.user.id;
-  const { currentPassword, newPassword } = req.body;
+export const changeStudentPassword = asyncHandler(
+  async (req: any, res: any) => {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    try {
+      const student = await db.user.findUnique({
+        where: {
+          id: userId,
+        },
+      });
+
+      if (!student) {
+        return sendNotFoundError(res, "Student not found");
+      }
+
+      const matchCurrentPassword = await bcrypt.compare(
+        currentPassword,
+        student.password || ""
+      );
+
+      if (!matchCurrentPassword) {
+        return sendValidationError(res, "Old password is incorrect");
+      }
+
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+      const updatedStudent = await db.user.update({
+        where: {
+          id: userId,
+        },
+        data: {
+          password: hashedNewPassword,
+        },
+      });
+
+      const { password, ...rest } = updatedStudent;
+
+      return sendSuccessResponse(
+        res,
+        HttpStatus.OK,
+        "Password changed successfully",
+        rest
+      );
+    } catch (error) {
+      return handleAsyncError(res, error, "Error changing student password");
+    }
+  }
+);
+
+export const getPrintingRates = asyncHandler(async (req: any, res: any) => {
+  const { stationaryId } = req.query;
 
   try {
-    const student = await db.user.findUnique({
+    const stationary = await db.stationary.findFirst({
       where: {
-        id: userId,
+        id: stationaryId,
       },
     });
 
-    if (!student) {
-      return res.status(404).json({
-        success: false,
-        message: "Student not found",
-      });
+    if (!stationary) {
+      return sendNotFoundError(res, "Stationary not found");
     }
 
-    const matchCurrentPassword = await bcrypt.compare(
-      currentPassword,
-      student.password || ""
+    const printingRates = await db.printingRates.findFirst({
+      where: {
+        stationaryId: stationary.id,
+      },
+    });
+
+    if (!printingRates) {
+      return sendNotFoundError(
+        res,
+        "Printing rates not found for this stationary"
+      );
+    }
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Printing rates fetched successfully",
+      {
+        colorRate: printingRates.colorRate,
+        bwRate: printingRates.bwRate,
+        duplexExtra: printingRates.duplexExtra,
+        hardbindRate: printingRates.hardbindRate,
+        spiralRate: printingRates.spiralRate,
+      }
     );
-    if (!matchCurrentPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Old password is incorrect",
-      });
-    }
+  } catch (error) {
+    return handleAsyncError(res, error, "Error fetching printing rates");
+  }
+});
 
-    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+export const getMyStationaries = asyncHandler(async (req: any, res: any) => {
+  const userId = req.user.id;
 
-    const updatedStudent = await db.user.update({
+  try {
+    const user = await db.user.findUnique({
       where: {
         id: userId,
       },
-      data: {
-        password: hashedNewPassword,
+      select: {
+        id: true,
+        collegeId: true,
       },
     });
 
-    const { password, ...rest } = updatedStudent;
+    if (!user) {
+      return sendNotFoundError(res, "User not found");
+    }
+    const stationaries = await db.stationary.findMany({
+      where: {
+        collegeId: user?.collegeId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
-    return res.status(200).json({
-      success: true,
-      message: "Password changed successfully",
-      data: rest,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Stationaries retrieved successfully",
+      stationaries
+    );
   } catch (error) {
-    console.error("Error changing student password:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error retrieving stationaries");
   }
-};
+});

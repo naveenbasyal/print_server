@@ -1,6 +1,21 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
+import "dotenv/config";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const createTransporter = () => {
+  return nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    service: "gmail",
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD,
+    },
+    tls: {
+      rejectUnauthorized: false,
+    },
+  });
+};
 
 const sendEmail = async (
   recipientEmail: string,
@@ -8,14 +23,32 @@ const sendEmail = async (
   content: string
 ): Promise<boolean> => {
   try {
-    const data = await resend.emails.send({
-      from: "Printify <onboarding@resend.dev>",
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+      throw new Error(
+        "Missing EMAIL_USER or EMAIL_PASSWORD in environment variables"
+      );
+    }
+
+    const transporter = createTransporter();
+    console.log(
+      "Creating email transporter with user:",
+      process.env.EMAIL_USER,
+      process.env.EMAIL_PASSWORD
+    );
+
+    const mailOptions = {
+      from: `"Printify" <${process.env.EMAIL_USER}>`,
       to: recipientEmail,
       subject: subject,
       html: content,
-    });
+    };
+    console.log("sending");
 
-    return data.error === null;
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Email info:", info);
+    console.log("Email options:", mailOptions);
+    console.log("Email sent successfully:", info.messageId);
+    return true;
   } catch (error) {
     console.error("Error sending email:", error);
     return false;

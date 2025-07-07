@@ -81,7 +81,9 @@ export const requireAdmin = (req: any, res: any, next: any) => {
       email: string;
       role: string;
     };
+    console.log("decoded", decoded);
 
+    const allowedRoles = ["ADMIN", "STAFF"];
     if (decoded.role !== "ADMIN") {
       return res.status(403).json({ message: "Access denied", success: false });
     }

@@ -1,26 +1,31 @@
 import { ulid } from "ulid";
 import db from "../../db/database";
-import { deleteFromCloudinary } from "../../services/cloudinaryService";
+
 import {
   handlePaymentSuccess,
   initiatePayment,
 } from "../../services/paymentService";
+import crypto from "crypto";
+import {
+  sendSuccessResponse,
+  sendValidationError,
+  sendNotFoundError,
+  handleAsyncError,
+  HttpStatus,
+} from "../../utils/responseFormatter";
+import { asyncHandler } from "../../utils/asyncHandler";
 
-export const createOrder = async (req: any, res: any) => {
+export const createOrder = asyncHandler(async (req: any, res: any) => {
   const userId = req?.user?.id;
+  const { stationaryId, orderType, deliveryAddress } = req.body;
+
+  if (orderType === "DELIVERY" && !deliveryAddress) {
+    return sendValidationError(res, "Please provide delivery address also");
+  }
+
   try {
-    const { stationaryId, orderType, deliveryAddress } = req.body;
-
-    if (orderType === "DELIVERY" && !deliveryAddress) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide delivery address also",
-      });
-    }
-    // TODO: validate paymentId from razorpay sdk later
-
     const [cart, user] = await Promise.all([
-      await db.cart.findFirst({
+      db.cart.findFirst({
         where: {
           userId: userId,
         },
@@ -28,7 +33,7 @@ export const createOrder = async (req: any, res: any) => {
           id: true,
         },
       }),
-      await db.user.findFirst({
+      db.user.findFirst({
         where: {
           id: userId,
         },
@@ -39,14 +44,11 @@ export const createOrder = async (req: any, res: any) => {
     ]);
 
     if (!cart) {
-      return res
-        .status(404)
-        .json({ message: "Cart not found.", success: false });
+      return sendNotFoundError(res, "Cart not found");
     }
+
     if (!user) {
-      return res
-        .status(404)
-        .json({ message: "User not found.", success: false });
+      return sendNotFoundError(res, "User not found");
     }
 
     const stationary = await db.stationary.findFirst({
@@ -57,20 +59,27 @@ export const createOrder = async (req: any, res: any) => {
     });
 
     if (!stationary) {
-      return res.status(404).json({
-        message: "Stationary not found or it does not belong to you",
-        success: false,
-      });
+      return sendNotFoundError(
+        res,
+        "Stationary not found or it does not belong to you"
+      );
     }
 
-    // fetch all cart items of user
+    if (orderType === "DELIVERY" && !stationary.canDeliver) {
+      return sendValidationError(
+        res,
+        "This stationary does not provide delivery service"
+      );
+    }
+
     const cartItems = await db.cartItem.findMany({
       where: {
         cartId: cart?.id,
       },
     });
+
     if (cartItems.length === 0) {
-      return res.status(400).json({ success: false, message: "Cart is empty" });
+      return sendValidationError(res, "Cart is empty");
     }
 
     console.log("cartItems", cartItems);
@@ -98,7 +107,6 @@ export const createOrder = async (req: any, res: any) => {
     });
     console.log("newOrder", newOrder);
 
-    //crate order item
     const orderItemData = cartItems.map(
       ({ cartId, createdAt, updatedAt, fileId, ...item }) => {
         return {
@@ -113,6 +121,7 @@ export const createOrder = async (req: any, res: any) => {
     const newOrderItems = await db.orderItem.createMany({
       data: orderItemData,
     });
+
     const newPayment = await initiatePayment(totalAmount, userId, newOrder.id);
 
     await db.payments.create({
@@ -124,8 +133,6 @@ export const createOrder = async (req: any, res: any) => {
       },
     });
 
-    //delete the cartitems
-
     await db.cartItem.deleteMany({
       where: {
         cartId: cart.id,
@@ -134,30 +141,41 @@ export const createOrder = async (req: any, res: any) => {
 
     // TODO: delete files from cloudinary also using fileid present in cartItem table -baadme krega stationary owner jab completed kar deaga
 
-    //initiate payment
-
-    return res.status(201).json({
-      success: true,
-      message: "Order created successfully",
-      data: {
+    return sendSuccessResponse(
+      res,
+      HttpStatus.CREATED,
+      "Order created successfully",
+      {
         newOrder,
         newPayment,
         newOrderItems,
+      }
+    );
+  } catch (error) {
+    return handleAsyncError(res, error, "Error creating order");
+  }
+});
+
+export const verifyPayment = asyncHandler(async (req: any, res: any) => {
+  const userId = req.user.id;
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+
+  try {
+    const existingPayment = await db.payments.findFirst({
+      where: {
+        paymentId: razorpayPaymentId,
+        status: "PAID",
       },
     });
-  } catch (error) {
-    console.error("Error creating order:", error);
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error", error });
-  }
-};
 
-export const verifyPayment = async (req: any, res: any) => {
-  const userId = req.user.id;
+    if (existingPayment) {
+      return sendSuccessResponse(
+        res,
+        HttpStatus.OK,
+        "Payment already verified"
+      );
+    }
 
-  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
-  try {
     const verification = await handlePaymentSuccess(
       razorpayOrderId,
       razorpayPaymentId,
@@ -166,25 +184,16 @@ export const verifyPayment = async (req: any, res: any) => {
     console.log("verification", verification);
 
     if (verification.data?.status === "captured") {
-      //payment ka status
       const payment = await db.payments.findFirst({
         where: {
           transactionId: razorpayOrderId,
         },
       });
+
       if (!payment) {
-        return res.status(400).json({
-          success: false,
-          message: "Payment not found",
-        });
+        return sendNotFoundError(res, "Payment not found");
       }
-      await db.payments.update({
-        where: { id: payment.id },
-        data: {
-          status: "PAID",
-          paymentId: razorpayPaymentId,
-        },
-      });
+
       //order ka status change krna to ACCEPTED
       const order = await db.order.findFirst({
         where: {
@@ -192,38 +201,124 @@ export const verifyPayment = async (req: any, res: any) => {
           userId,
         },
       });
-      if (!order) {
-        return res.status(400).json({
-          success: false,
-          message: "Order not found",
-        });
-      }
-      await db.order.update({
-        where: {
-          id: order.id,
-        },
-        data: {
-          status: "ACCEPTED",
-          paymentId: verification.data.id,
-        },
-      });
-    }
-    return res.status(verification?.success ? 200 : 400).json({
-      success: verification.success,
-      message: verification.message,
-    });
-  } catch (error: any) {
-    console.error("Error verifying payment:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
-  }
-};
 
-export const getOrders = async (req: any, res: any) => {
+      if (!order) {
+        return sendNotFoundError(res, "Order not found");
+      }
+
+      await db.$transaction([
+        db.payments.update({
+          where: { id: payment.id },
+          data: {
+            status: "PAID",
+            paymentId: razorpayPaymentId,
+          },
+        }),
+        db.order.update({
+          where: {
+            id: order.id,
+          },
+          data: {
+            status: "ACCEPTED",
+            paymentId: verification.data.id,
+          },
+        }),
+      ]);
+    }
+
+    const statusCode = verification?.success
+      ? HttpStatus.OK
+      : HttpStatus.BAD_REQUEST;
+
+    if (verification.success) {
+      return sendSuccessResponse(res, statusCode, verification.message);
+    } else {
+      return sendValidationError(res, verification.message);
+    }
+  } catch (error: any) {
+    return handleAsyncError(res, error, "Error verifying payment");
+  }
+});
+
+export const handleRazorpayWebhook = asyncHandler(
+  async (req: any, res: any) => {
+    const signature = req.headers["x-razorpay-signature"];
+    const body = req.body;
+    console.log("[Webhook] Received body:", body);
+
+    const expectedSignature = crypto
+      .createHmac("sha256", "secret_123")
+      .update(req.body)
+      .digest("hex");
+
+    if (expectedSignature !== signature) {
+      console.warn("[Webhook] Invalid signature");
+      return sendValidationError(res, "Invalid signature");
+    }
+    console.log("[Webhook] Valid signature received");
+
+    try {
+      const webhookPayload = JSON.parse(body);
+      console.log("webhookPayload", webhookPayload);
+      const event = webhookPayload.event;
+
+      if (event === "payment.captured") {
+        const paymentId = webhookPayload.payload.payment.entity.id;
+        const orderId = webhookPayload.payload.payment.entity.order_id;
+
+        const existingPayment = await db.payments.findFirst({
+          where: {
+            paymentId: paymentId,
+          },
+        });
+
+        if (existingPayment) {
+          console.log("[Webhook] Payment already processed");
+          return sendSuccessResponse(res, HttpStatus.OK, "Already handled");
+        }
+
+        const paymentRecord = await db.payments.findFirst({
+          where: {
+            transactionId: orderId,
+          },
+        });
+
+        if (!paymentRecord) {
+          console.error("[Webhook] No matching payment found in DB");
+          return sendNotFoundError(res, "Payment not found");
+        }
+
+        await db.$transaction([
+          db.payments.update({
+            where: { id: paymentRecord.id },
+            data: {
+              paymentId: paymentId,
+              status: "PAID",
+            },
+          }),
+          db.order.update({
+            where: { id: paymentRecord.orderId },
+            data: {
+              status: "ACCEPTED",
+              paymentId: paymentId,
+            },
+          }),
+        ]);
+
+        console.log("[Webhook] Payment processed via webhook");
+        return sendSuccessResponse(res, HttpStatus.OK, "Payment processed");
+      }
+
+      return sendSuccessResponse(res, HttpStatus.OK, "Unhandled event");
+    } catch (error: any) {
+      return handleAsyncError(res, error, "[Webhook] Error handling webhook");
+    }
+  }
+);
+
+export const getOrders = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
+
   try {
     const orders = await db.order.findMany({
       where: {
@@ -238,15 +333,13 @@ export const getOrders = async (req: any, res: any) => {
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      data: orders,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Orders fetched successfully",
+      orders
+    );
   } catch (error) {
-    console.error("Error fetching orders:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
+    return handleAsyncError(res, error, "Error fetching orders");
   }
-};
+});

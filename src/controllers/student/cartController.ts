@@ -4,69 +4,98 @@ import {
   deleteFromCloudinary,
   uploadToCloudinary,
 } from "../../services/cloudinaryService";
+import {
+  sendSuccessResponse,
+  sendValidationError,
+  sendNotFoundError,
+  handleAsyncError,
+  HttpStatus,
+} from "../../utils/responseFormatter";
+import { asyncHandler } from "../../utils/asyncHandler";
 
-export const addCartItem = async (req: any, res: any) => {
+export const addCartItem = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
-
   const files = req.files;
   const metadata = JSON.parse(req.body.metadata);
+
   if (!files || !metadata || files.length !== metadata.length) {
-    return res.status(400).json({
-      message: "Files and metadata count mismatch or missing.",
-      success: false,
-    });
+    return sendValidationError(
+      res,
+      "Files and metadata count mismatch or missing."
+    );
   }
+
+  const itemIds = Array.from({ length: files.length }, () => ulid());
+  let uploadResults: any[] = [];
+
   try {
-    let cart = await db.cart.findFirst({
-      where: { userId },
+    const [uploadResultsData, existingCart] = await Promise.all([
+      Promise.all(
+        files.map((file: any, idx: number) =>
+          uploadToCloudinary(file)
+            .then(({ secure_url, public_id }) => ({
+              secure_url,
+              public_id,
+              metadata: metadata[idx],
+              id: itemIds[idx],
+            }))
+            .catch(() => {
+              throw new Error(`Upload failed for file ${file.originalname}`);
+            })
+        )
+      ),
+
+      db.cart.findFirst({ where: { userId } }),
+    ]);
+
+    uploadResults = uploadResultsData;
+    const cartItems = await db.$transaction(async (tx) => {
+      const cart = existingCart || (await tx.cart.create({ data: { userId } }));
+
+      const cartItemData = uploadResults.map((item) => ({
+        id: item.id,
+        cartId: cart.id,
+        name: item.metadata.name,
+        fileUrl: item.secure_url,
+        fileId: item.public_id,
+        coloured: item.metadata.coloured,
+        duplex: item.metadata.duplex,
+        spiral: item.metadata.spiral,
+        hardbind: item.metadata.hardbind,
+        quantity: item.metadata.quantity,
+        price: item.metadata.price,
+        fileType: item.metadata.fileType,
+      }));
+
+      await tx.cartItem.createMany({
+        data: cartItemData,
+        skipDuplicates: true,
+      });
+
+      return tx.cartItem.findMany({
+        where: { id: { in: itemIds } },
+      });
     });
 
-    if (!cart) {
-      cart = await db.cart.create({
-        data: { userId },
-      });
-    }
-
-    const cartItems = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const options = metadata[i];
-
-      const { secure_url, public_id } = await uploadToCloudinary(file);
-
-      const cartItem = await db.cartItem.create({
-        data: {
-          id: ulid(),
-          cartId: cart.id,
-          name: options.name,
-          fileUrl: secure_url,
-          fileId: public_id,
-          coloured: options.coloured,
-          duplex: options.duplex,
-          spiral: options.spiral,
-          hardbind: options.hardbind,
-          quantity: options.quantity,
-          price: options.price,
-          fileType: options.fileType,
-        },
-      });
-
-      cartItems.push(cartItem);
-    }
-    return res.status(201).json({
-      message: "Cart items added successfully.",
-      success: true,
-      data: cartItems,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.CREATED,
+      "Cart items added successfully.",
+      cartItems
+    );
   } catch (error) {
-    console.error("Error creating cart item:", error);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", success: false, data: error });
-  }
-};
+    if (uploadResults.length > 0) {
+      Promise.allSettled(
+        uploadResults.map((f) => deleteFromCloudinary(f.public_id))
+      ).catch(() => {
+        console.error("Cleanup failed for some files");
+      });
+    }
 
-export const getCartItems = async (req: any, res: any) => {
+    return handleAsyncError(res, error, "Error creating cart item");
+  }
+});
+export const getCartItems = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
 
   try {
@@ -78,75 +107,54 @@ export const getCartItems = async (req: any, res: any) => {
     });
 
     if (!cart) {
-      return res.status(404).json({
-        message: "Cart not found.",
-        success: false,
-      });
+      return sendNotFoundError(res, "Cart not found.");
     }
 
-    return res.status(200).json({
-      message: "Cart items retrieved successfully.",
-      success: true,
-      data: cart.cartItems || [],
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Cart items retrieved successfully.",
+      cart.cartItems || []
+    );
   } catch (error) {
-    console.error("Error retrieving cart items:", error);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", success: false, data: error });
+    return handleAsyncError(res, error, "Error retrieving cart items");
   }
-};
+});
 
-export const deleteCartItem = async (req: any, res: any) => {
+export const deleteCartItem = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
-  const { itemId } = req.params;
+  const itemId = req.params.itemId;
 
   try {
-    const cart = await db.cart.findFirst({
-      where: { userId },
-      select: {
-        id: true,
-      },
-    });
-
-    if (!cart) {
-      return res.status(404).json({
-        message: "Cart not found.",
-        success: false,
-      });
-    }
-
     const cartItem = await db.cartItem.findUnique({
-      where: { id: itemId, cartId: cart.id },
-      select: {
-        id: true,
-        fileId: true,
-      },
+      where: { id: itemId },
+      include: { Cart: true },
     });
-
+    if (!itemId) {
+      return sendValidationError(res, "Item ID is required.");
+    }
     if (!cartItem) {
-      return res.status(404).json({
-        message: "Cart item not found.",
-        success: false,
-      });
+      return sendNotFoundError(res, "Cart item not found.");
     }
 
-    if (cartItem.fileId) {
-      await deleteFromCloudinary(cartItem.fileId);
+    if (cartItem.Cart && cartItem.Cart.userId !== userId) {
+      return sendNotFoundError(res, "Cart does not belong to user.");
     }
 
     await db.cartItem.delete({
       where: { id: itemId },
     });
 
-    return res.status(200).json({
-      message: "Cart item deleted successfully.",
-      success: true,
-    });
+    if (cartItem.fileId) {
+      await deleteFromCloudinary(cartItem.fileId);
+    }
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Cart item deleted successfully."
+    );
   } catch (error) {
-    console.error("Error deleting cart item:", error);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", success: false, data: error });
+    return handleAsyncError(res, error, "Error deleting cart item");
   }
-};
+});

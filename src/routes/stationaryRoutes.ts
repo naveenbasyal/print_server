@@ -8,8 +8,13 @@ import {
   updateProfile,
   changePassword,
   updateActiveStatus,
+  getPrintingRates,
+  updatePrintingRates,
 } from "../controllers/stationary_owner/stationaryController";
-import { requireStationaryOwner } from "../middleware/authmiddleware";
+import {
+  requireAdmin,
+  requireStationaryOwner,
+} from "../middleware/authmiddleware";
 import { getAnalytics } from "../controllers/stationary_owner/analytics_controller";
 
 const router = express.Router();
@@ -17,13 +22,17 @@ const router = express.Router();
 // auth
 router.post("/login", loginStationaryOwner);
 
+//general
+router.get("/printing-rates", requireStationaryOwner, getPrintingRates);
+router.patch("/printing-rates", requireStationaryOwner, updatePrintingRates);
+
 // order management
 router.get("/orders", requireStationaryOwner, getOrders);
 router.patch("/orders/update", requireStationaryOwner, updateOrderStatus);
 
 router.get("/analytics", requireStationaryOwner, getAnalytics);
 
-// profile 
+// profile
 router.use(
   "/profile",
   requireStationaryOwner,

@@ -384,3 +384,101 @@ export const updateActiveStatus = async (req: any, res: any) => {
     });
   }
 };
+
+// ======================= PRINTING RATES CONTROLLER =======================
+
+export const getPrintingRates = async (req: any, res: any) => {
+  try {
+    const { id } = req.user;
+
+    const stationary = await db.stationary.findFirst({
+      where: {
+        ownerId: id,
+      },
+    });
+
+    if (!stationary) {
+      return res.status(404).json({
+        success: false,
+        message: "Stationary not found for this owner",
+      });
+    }
+
+    const printingRates = await db.printingRates.findFirst({
+      where: {
+        stationaryId: stationary.id,
+      },
+    });
+    if (!printingRates) {
+      return res.status(404).json({
+        success: false,
+        message: "Printing rates not found for this stationary",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "Printing rates fetched successfully",
+      data: {
+        colorRate: printingRates.colorRate,
+        bwRate: printingRates.bwRate,
+        duplexExtra: printingRates.duplexExtra,
+        hardbindRate: printingRates.hardbindRate,
+        spiralRate: printingRates.spiralRate,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching printing rates:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
+
+export const updatePrintingRates = async (req: any, res: any) => {
+  try {
+    const { id } = req.user;
+    const { colorRate, bwRate, duplexExtra, hardbindRate, spiralRate } =
+      req.body;
+
+    const stationary = await db.stationary.findFirst({
+      where: {
+        ownerId: id,
+      },
+    });
+
+    if (!stationary) {
+      return res.status(404).json({
+        success: false,
+        message: "Stationary not found for this owner",
+      });
+    }
+
+    const updatedRates = await db.printingRates.update({
+      where: {
+        stationaryId: stationary.id,
+      },
+      data: {
+        colorRate,
+        bwRate,
+        duplexExtra,
+        hardbindRate,
+        spiralRate,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Printing rates updated successfully",
+      data: updatedRates,
+    });
+  } catch (error) {
+    console.error("Error updating printing rates:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};

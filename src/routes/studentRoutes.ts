@@ -1,8 +1,11 @@
 import express from "express";
+import bodyParser from "body-parser";
 
 import {
   changeStudentPassword,
   findColleges,
+  getMyStationaries,
+  getPrintingRates,
   getStudentProfile,
   loginStudent,
   registerStudent,
@@ -18,6 +21,7 @@ import {
 import {
   createOrder,
   getOrders,
+  handleRazorpayWebhook,
   verifyPayment,
 } from "../controllers/student/orderController";
 
@@ -29,7 +33,10 @@ router.post("/register", registerStudent);
 router.post("/login", loginStudent);
 router.post("/verify-otp", verifyOtp);
 
+//general
 router.get("/find-colleges", findColleges);
+router.get("/get-stationaries", requireUser, getMyStationaries);
+router.get("/printing-rates", requireUser, getPrintingRates);
 
 // cart and orders
 router.get("/cart", requireUser, getCartItems);
@@ -43,6 +50,11 @@ router.patch("/change-password", requireUser, changeStudentPassword);
 
 // Payments
 router.post("/create-order", requireUser, createOrder);
+router.post(
+  "/payments/webhook",
+  bodyParser.raw({ type: "application/json" }),
+  handleRazorpayWebhook
+);
 router.post("/verify-payment", requireUser, verifyPayment);
 
 export default router;
