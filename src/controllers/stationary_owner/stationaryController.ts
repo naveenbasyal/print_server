@@ -1,201 +1,198 @@
 import db from "../../db/database";
 import bcrypt from "bcrypt";
 import { generateToken } from "../../services/jwtService";
+import { asyncHandler } from "../../utils/asyncHandler";
+import {
+  handleAsyncError,
+  HttpStatus,
+  sendNotFoundError,
+  sendSuccessResponse,
+  sendValidationError,
+} from "../../utils/responseFormatter";
 
-export const loginStationaryOwner = async (req: any, res: any) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({
-      success: false,
-      message: "Email and password are required",
-    });
-  }
+export const loginStationaryOwner = asyncHandler(async (req: any, res: any) => {
   try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return sendValidationError(res, "Email and password are required");
+    }
+
     const stationaryOwner = await db.user.findFirst({
       where: {
-        email: email,
+        email,
         role: "STATIONARY_OWNER",
       },
     });
+
     if (!stationaryOwner) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid email or password",
-      });
+      return sendValidationError(res, "Invalid email or password");
     }
 
     const matchPassword = await bcrypt.compare(
       password,
-      stationaryOwner?.password || ""
+      stationaryOwner.password || ""
     );
+
     if (!matchPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid email or password",
-      });
+      return sendValidationError(res, "Invalid email or password");
     }
+
     const token = generateToken(
       stationaryOwner.id,
       stationaryOwner.email,
       "STATIONARY_OWNER"
     );
-    return res.status(200).json({
-      success: true,
 
-      message: "Login successful",
-      data: {
-        userId: stationaryOwner.id,
-        email: stationaryOwner.email,
-        token: token,
-      },
+    return sendSuccessResponse(res, HttpStatus.OK, "Login successful", {
+      userId: stationaryOwner.id,
+      email: stationaryOwner.email,
+      token,
     });
-  } catch (error: unknown) {
-    console.error("Error logging in stationary owner:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+  } catch (error: any) {
+    return handleAsyncError(res, error, "Login failed");
   }
-};
+});
 
-export const getOrders = async (req: any, res: any) => {
+export const getOrders = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
 
   try {
     return await db.$transaction(async (tx) => {
       const stationary = await tx.stationary.findFirst({
-        where: {
-          ownerId: userId,
-        },
-        select: {
-          id: true,
-        },
+        where: { ownerId: userId },
+        select: { id: true },
       });
 
       if (!stationary) {
-        return res.status(400).json({
-          message: "Stationary is not linked to the user",
-          success: false,
-        });
+        return sendValidationError(res, "Stationary is not linked to you");
       }
 
       const orders = await tx.order.findMany({
-        where: {
-          stationaryId: stationary.id,
-        },
+        where: { stationaryId: stationary.id },
         include: {
           OrderItem: true,
           college: true,
-          user: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+            },
+          },
+          Payments: {
+            select: {
+              status: true,
+              createdAt: true,
+            },
+          },
+          Commission: {
+            select: {
+              commissionFee: true,
+              commissionRate: true,
+            },
+          },
         },
       });
 
-      return res.status(200).json({
-        message: "Orders fetched",
-        success: true,
-        data: orders,
+      const formattedOrders = orders
+        .map((order: any) => ({
+          ...order,
+          totalPrice:
+            order.OrderItem.reduce(
+              (acc: number, item: any) => acc + item.price,
+              0
+            ) - (order.Commission?.commissionFee || 0),
+        }))
+        .sort(
+          (a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()
+        );
+
+      formattedOrders.forEach((order: any) => {
+        delete order.Commission;
+        delete order.otp;
       });
+
+      return sendSuccessResponse(
+        res,
+        HttpStatus.OK,
+        "Orders fetched",
+        formattedOrders
+      );
     });
   } catch (error) {
-    console.log("Error fetching orders", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error fetching orders");
   }
-};
+});
 
-export const updateOrderStatus = async (req: any, res: any) => {
+export const updateOrderStatus = asyncHandler(async (req: any, res: any) => {
   try {
-    const allowedStatus = [
-      "PENDING",
-      "CANCELLED",
-      "ACCEPTED",
-      "IN_PROGRESS",
-
-      "COMPLETED",
-      "OUT_FOR_DELIVERY",
-      "DELIVERED", //need otp
-    ];
     const { status, orderId, otp } = req.body;
 
+    const allowedStatus = [
+      "CANCELLED",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "OUT_FOR_DELIVERY",
+      "DELIVERED",
+    ];
+
     if (!allowedStatus.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-      });
+      return sendValidationError(res, "Invalid order status");
     }
-    const order = await db.order.findFirst({
-      where: {
-        id: orderId,
-      },
-    });
-    console.log("order", order);
 
-    if (!order) {
-      return res.status(404).json({
-        message: "Order not found.",
-        success: false,
-      });
-    }
+    const order = await db.order.findFirst({ where: { id: orderId } });
+
+    if (!order) return sendNotFoundError(res, "Order not found");
+
     if (order.status === "DELIVERED") {
-      return res.status(400).json({
-        message: "Order is already Delivered.",
-        success: false,
-      });
-    }
-    if (status === "OUT_FOR_DELIVERY" && order.orderType === "TAKEAWAY") {
-      return res.status(400).json({
-        message: "Customer will come to you because it is TAKEAWAY",
-        success: false,
-      });
+      return sendValidationError(res, "Order is already delivered");
     }
 
-    if (status === "DELIVERED" && !otp) {
-      return res.status(404).json({
-        message: "OTP Is Required.",
-        success: false,
-      });
+    if (status === "OUT_FOR_DELIVERY" && order.orderType === "TAKEAWAY") {
+      return sendValidationError(
+        res,
+        "TAKEAWAY orders don't need OUT_FOR_DELIVERY status"
+      );
     }
-    if (status === "DELIVERED" && otp && otp !== order.otp) {
-      return res.status(404).json({
-        message: "Wrong OTP, kick his ass",
-        success: false,
-      });
+
+    if (status === "COMPLETED" && order.orderType === "DELIVERY") {
+      return sendValidationError(
+        res,
+        "Mark as OUT_FOR_DELIVERY first for DELIVERY type"
+      );
     }
-    const updatedRecord = await db.order.update({
-      where: {
-        id: orderId,
-      },
-      data: {
-        status: status,
-      },
+
+    if (status === "DELIVERED") {
+      if (!otp) return sendValidationError(res, "OTP is required for delivery");
+      if (otp !== order.otp) return sendValidationError(res, "Invalid OTP");
+    }
+
+    const updatedOrder = await db.order.update({
+      where: { id: orderId },
+      data: { status },
     });
-    return res.status(500).json({
-      success: false,
-      message: "Updated",
-      data: updatedRecord,
-    });
-  } catch (error) {
-    console.error("Error updating order status:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Order status updated successfully",
+      updatedOrder
+    );
+  } catch (error: any) {
+    return handleAsyncError(res, error, "Error updating order status");
   }
-};
+});
 
 // ======================= PROFILE CONTROLLER =======================
 
-export const getProfile = async (req: any, res: any) => {
+export const getProfile = asyncHandler(async (req: any, res: any) => {
   try {
     const { id } = req.user;
 
     const user = await db.user.findUnique({
-      where: { id: id },
+      where: { id },
       include: {
         college: true,
         Stationary: true,
@@ -203,26 +200,23 @@ export const getProfile = async (req: any, res: any) => {
     });
 
     if (!user) {
-      return res.status(404).json({ success: true, message: "User not found" });
+      return sendValidationError(res, "User not found");
     }
 
-    // Remove password from response
     const { password, ...userWithoutPassword } = user;
 
-    return res.status(200).json({
-      success: true,
-      message: "Profile fetched successfully",
-      data: userWithoutPassword,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Profile fetched successfully",
+      userWithoutPassword
+    );
   } catch (error) {
-    console.error("Profile fetch error:", error);
-    res
-      .status(500)
-      .json({ success: true, message: "Internal server error", error });
+    return handleAsyncError(res, error, "Profile fetch error");
   }
-};
+});
 
-export const updateProfile = async (req: any, res: any) => {
+export const updateProfile = asyncHandler(async (req: any, res: any) => {
   try {
     const { id } = req.user;
     const { name, phone } = req.body;
@@ -236,18 +230,16 @@ export const updateProfile = async (req: any, res: any) => {
       });
 
       if (existingUser) {
-        return res
-          .status(400)
-          .json({ success: true, message: "Phone number already in use" });
+        return sendValidationError(res, "Phone number already in use");
       }
-    }
 
-    const phoneRegex = /^\d{10}$/;
-    if (phone && !phoneRegex.test(phone)) {
-      return res.status(400).json({
-        success: true,
-        message: "Invalid phone number format. Must be 10 digits.",
-      });
+      const phoneRegex = /^\d{10}$/;
+      if (!phoneRegex.test(phone)) {
+        return sendValidationError(
+          res,
+          "Invalid phone number format. Must be 10 digits."
+        );
+      }
     }
 
     const updatedUser = await db.user.update({
@@ -258,47 +250,40 @@ export const updateProfile = async (req: any, res: any) => {
       },
     });
 
-    // Remove password from response
     const { password, ...userWithoutPassword } = updatedUser;
 
-    return res.status(200).json({
-      success: true,
-      message: "Profile updated successfully",
-      data: userWithoutPassword,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Profile updated successfully",
+      userWithoutPassword
+    );
   } catch (error) {
-    console.error("Profile update error:", error);
-    res
-      .status(500)
-      .json({ success: true, message: "Internal server error", error });
+    return handleAsyncError(res, error, "Profile update error");
   }
-};
+});
 
-export const changePassword = async (req: any, res: any) => {
+export const changePassword = asyncHandler(async (req: any, res: any) => {
   try {
     const { id } = req.user;
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        success: true,
-        message: "Current password and new password are required",
-      });
+      return sendValidationError(
+        res,
+        "Both current and new passwords are required"
+      );
     }
 
-    const user = await db.user.findUnique({
-      where: { id },
-    });
+    const user = await db.user.findUnique({ where: { id } });
+    if (!user) return sendValidationError(res, "User not found");
 
-    if (!user) {
-      return res.status(404).json({ success: true, message: "User not found" });
-    }
     const isSame = await bcrypt.compare(newPassword, user.password);
     if (isSame) {
-      return res.status(400).json({
-        success: false,
-        message: "New password cannot be the same as the current password",
-      });
+      return sendValidationError(
+        res,
+        "New password cannot be same as current password"
+      );
     }
 
     const isValidPassword = await bcrypt.compare(
@@ -306,179 +291,137 @@ export const changePassword = async (req: any, res: any) => {
       user.password
     );
     if (!isValidPassword) {
-      return res
-        .status(400)
-        .json({ success: true, message: "Current password is incorrect" });
+      return sendValidationError(res, "Current password is incorrect");
     }
 
     if (newPassword.length < 6) {
-      return res.status(400).json({
-        success: true,
-        message: "New password must be at least 6 characters long",
-      });
+      return sendValidationError(
+        res,
+        "New password must be at least 6 characters long"
+      );
     }
+
     const hashedNewPassword = await bcrypt.hash(newPassword, 10);
 
     await db.user.update({
       where: { id },
-      data: {
-        password: hashedNewPassword,
-      },
+      data: { password: hashedNewPassword },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Password updated successfully",
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Password updated successfully"
+    );
   } catch (error) {
-    console.error("Password change error:", error);
-    return res
-      .status(500)
-      .json({ success: true, message: "Internal server error", error });
+    return handleAsyncError(res, error, "Password change error");
   }
-};
+});
 
-export const updateActiveStatus = async (req: any, res: any) => {
+export const updateActiveStatus = asyncHandler(async (req: any, res: any) => {
   try {
     const { id } = req.user;
     const { isActive } = req.body;
 
+    if (isActive === undefined) {
+      return sendValidationError(res, "isActive is required");
+    }
     if (typeof isActive !== "boolean") {
-      return res.status(400).json({
-        success: false,
-        message: "isActive must be a boolean value",
-      });
+      return sendValidationError(res, "isActive must be a boolean value");
     }
 
     const stationary = await db.stationary.findFirst({
-      where: {
-        ownerId: id,
-      },
+      where: { ownerId: id },
     });
 
     if (!stationary) {
-      return res.status(404).json({
-        success: false,
-        message: "Stationary not found for this owner",
-      });
+      return sendValidationError(res, "Stationary not found for this owner");
     }
 
     const updatedStationary = await db.stationary.update({
-      where: {
-        id: stationary.id,
-      },
+      where: { id: stationary.id },
       data: { isActive },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: `Shop status updated to ${isActive ? "active" : "inactive"}`,
-      data: updatedStationary,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      `Shop status updated to ${isActive ? "active" : "inactive"}`,
+      updatedStationary
+    );
   } catch (error) {
-    console.error("Error updating shop status:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error updating shop status");
   }
-};
+});
 
 // ======================= PRINTING RATES CONTROLLER =======================
 
-export const getPrintingRates = async (req: any, res: any) => {
+export const getPrintingRates = asyncHandler(async (req: any, res: any) => {
   try {
     const { id } = req.user;
 
     const stationary = await db.stationary.findFirst({
-      where: {
-        ownerId: id,
-      },
+      where: { ownerId: id },
     });
 
     if (!stationary) {
-      return res.status(404).json({
-        success: false,
-        message: "Stationary not found for this owner",
-      });
+      return sendValidationError(res, "Stationary not found for this owner");
     }
 
     const printingRates = await db.printingRates.findFirst({
-      where: {
-        stationaryId: stationary.id,
-      },
+      where: { stationaryId: stationary.id },
     });
+
     if (!printingRates) {
-      return res.status(404).json({
-        success: false,
-        message: "Printing rates not found for this stationary",
-      });
+      return sendValidationError(
+        res,
+        "Printing rates not found for this stationary"
+      );
     }
-    return res.status(200).json({
-      success: true,
-      message: "Printing rates fetched successfully",
-      data: {
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Printing rates fetched successfully",
+      {
         colorRate: printingRates.colorRate,
         bwRate: printingRates.bwRate,
         duplexExtra: printingRates.duplexExtra,
         hardbindRate: printingRates.hardbindRate,
         spiralRate: printingRates.spiralRate,
-      },
-    });
+      }
+    );
   } catch (error) {
-    console.error("Error fetching printing rates:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error fetching printing rates");
   }
-};
+});
 
-export const updatePrintingRates = async (req: any, res: any) => {
+export const updatePrintingRates = asyncHandler(async (req: any, res: any) => {
   try {
     const { id } = req.user;
     const { colorRate, bwRate, duplexExtra, hardbindRate, spiralRate } =
       req.body;
 
     const stationary = await db.stationary.findFirst({
-      where: {
-        ownerId: id,
-      },
+      where: { ownerId: id },
     });
 
     if (!stationary) {
-      return res.status(404).json({
-        success: false,
-        message: "Stationary not found for this owner",
-      });
+      return sendValidationError(res, "Stationary not found for this owner");
     }
 
     const updatedRates = await db.printingRates.update({
-      where: {
-        stationaryId: stationary.id,
-      },
-      data: {
-        colorRate,
-        bwRate,
-        duplexExtra,
-        hardbindRate,
-        spiralRate,
-      },
+      where: { stationaryId: stationary.id },
+      data: { colorRate, bwRate, duplexExtra, hardbindRate, spiralRate },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Printing rates updated successfully",
-      data: updatedRates,
-    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Printing rates updated successfully",
+      updatedRates
+    );
   } catch (error) {
-    console.error("Error updating printing rates:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return handleAsyncError(res, error, "Error updating printing rates");
   }
-};
+});

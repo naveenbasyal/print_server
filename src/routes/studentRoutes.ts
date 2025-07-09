@@ -9,6 +9,7 @@ import {
   getStudentProfile,
   loginStudent,
   registerStudent,
+  resendOtp,
   verifyOtp,
 } from "../controllers/student/authController";
 import { requireUser } from "../middleware/authmiddleware";
@@ -32,6 +33,7 @@ const upload = multer();
 router.post("/register", registerStudent);
 router.post("/login", loginStudent);
 router.post("/verify-otp", verifyOtp);
+router.post("/resend-otp", resendOtp);
 
 //general
 router.get("/find-colleges", findColleges);

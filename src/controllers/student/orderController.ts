@@ -23,6 +23,9 @@ export const createOrder = asyncHandler(async (req: any, res: any) => {
     return sendValidationError(res, "Please provide delivery address also");
   }
 
+  const PLATFORM_FEE = 5; //for us
+  const DELIVERY_FEE = 20; //for partner = orderAmount + DELIVERY_FEE
+
   try {
     const [cart, user] = await Promise.all([
       db.cart.findFirst({
@@ -89,20 +92,24 @@ export const createOrder = asyncHandler(async (req: any, res: any) => {
     const totalAmount = cartItems
       .map((item) => item.price)
       .reduce((acc, price) => acc + price, 0);
+    const totalPrice =
+      orderType === "DELIVERY" ? totalAmount + DELIVERY_FEE : totalAmount;
+
+    const grandTotal = totalPrice + PLATFORM_FEE;
 
     const newOrder = await db.order.create({
       data: {
         id: ulid(),
         userId,
         collegeId: user?.collegeId,
+        stationaryId: stationaryId,
         cartId: cart?.id,
         status: "PENDING",
-        totalPrice: totalAmount,
-        stationaryId: stationaryId,
+        totalPrice: totalPrice,
         otp: otp.toString(),
         orderType: orderType,
         deliveryAddress: orderType === "DELIVERY" ? deliveryAddress : null,
-        deliveryFee: orderType === "DELIVERY" ? 20 : 0,
+        deliveryFee: orderType === "DELIVERY" ? DELIVERY_FEE : 0,
       },
     });
     console.log("newOrder", newOrder);
@@ -122,7 +129,7 @@ export const createOrder = asyncHandler(async (req: any, res: any) => {
       data: orderItemData,
     });
 
-    const newPayment = await initiatePayment(totalAmount, userId, newOrder.id);
+    const newPayment = await initiatePayment(grandTotal, userId, newOrder.id);
 
     await db.payments.create({
       data: {
@@ -138,8 +145,6 @@ export const createOrder = asyncHandler(async (req: any, res: any) => {
         cartId: cart.id,
       },
     });
-
-    // TODO: delete files from cloudinary also using fileid present in cartItem table -baadme krega stationary owner jab completed kar deaga
 
     return sendSuccessResponse(
       res,
@@ -205,6 +210,22 @@ export const verifyPayment = asyncHandler(async (req: any, res: any) => {
       if (!order) {
         return sendNotFoundError(res, "Order not found");
       }
+      const razorpayData = verification.data;
+
+      //raxprpya ne jo kata on total amount
+      const razorpayFee = Math.ceil(razorpayData.fee / 100);
+      //razorpay ne jo tax lagaya(GST)
+      const gstOnRzpFee = Math.ceil(razorpayData.tax / 100);
+
+      // Platform and commission
+      const PLATFORM_FEE = 5;
+      const COMMISSION_RATE = 5; // 5%
+      const COMMISSION_FEE = Math.ceil(
+        order.totalPrice * (COMMISSION_RATE / 100)
+      );
+
+      const NET_EARNING =
+        PLATFORM_FEE + COMMISSION_FEE - razorpayFee - gstOnRzpFee;
 
       await db.$transaction([
         db.payments.update({
@@ -221,6 +242,20 @@ export const verifyPayment = asyncHandler(async (req: any, res: any) => {
           data: {
             status: "ACCEPTED",
             paymentId: verification.data.id,
+          },
+        }),
+        db.commission.create({
+          data: {
+            id: ulid(),
+            orderId: order.id,
+            stationaryId: order.stationaryId,
+            platformFee: PLATFORM_FEE,
+            commissionRate: COMMISSION_RATE,
+            commissionFee: COMMISSION_FEE,
+            razorpayFee,
+            gstOnRzpFee,
+            netEarnings: NET_EARNING,
+            status: "PENDING",
           },
         }),
       ]);
@@ -327,17 +362,26 @@ export const getOrders = asyncHandler(async (req: any, res: any) => {
       include: {
         OrderItem: true,
         stationary: true,
+        Commission: {
+          select: {
+            platformFee: true,
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
       },
     });
+    const formattedOrders = orders.map((order) => ({
+      ...order,
+      platformFee: order.Commission?.platformFee ?? 0,
+    }));
 
     return sendSuccessResponse(
       res,
       HttpStatus.OK,
       "Orders fetched successfully",
-      orders
+      formattedOrders
     );
   } catch (error) {
     return handleAsyncError(res, error, "Error fetching orders");

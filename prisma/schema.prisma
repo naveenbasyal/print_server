@@ -50,6 +50,7 @@ model Stationary {
   college       College        @relation(fields: [collegeId], references: [id])
   owner         User           @relation(fields: [ownerId], references: [id])
   PrintingRates PrintingRates?
+  Commission    Commission[]
 }
 
 model User {
@@ -122,6 +123,7 @@ model Order {
   user            User        @relation(fields: [userId], references: [id])
   OrderItem       OrderItem[]
   Payments        Payments[]
+  Commission      Commission?
 }
 
 enum OrderStatus {
@@ -161,11 +163,11 @@ model OrderItem {
 
 model Payments {
   id            String        @id @default(ulid())
+  orderId       String
   transactionId String?
   paymentId     String?
   description   String?
   status        PaymentStatus
-  orderId       String
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   order         Order         @relation(fields: [orderId], references: [id])
@@ -220,4 +222,31 @@ model PrintingRates {
   duplexExtra  Int
 
   stationary Stationary @relation(fields: [stationaryId], references: [id])
+}
+
+model Commission {
+  id           String @id @default(ulid())
+  orderId      String @unique
+  stationaryId String
+
+  platformFee    Int // ₹5 flat from customer
+  commissionRate Float // e.g. 5 (%)
+  commissionFee  Int // 5% of totalPrice
+
+  razorpayFee Int // In ₹
+  gstOnRzpFee Int // GST on razorpay fee
+  netEarnings Int // Final profit = (commissionFee + platformFee) - razorpayFee - gst
+
+  status CommissionStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  stationary Stationary @relation(fields: [stationaryId], references: [id])
+}
+
+enum CommissionStatus {
+  PENDING
+  COMPLETED
 }

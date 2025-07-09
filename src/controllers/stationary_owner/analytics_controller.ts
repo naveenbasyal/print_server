@@ -1,25 +1,37 @@
 import db from "../../db/database";
+import { asyncHandler } from "../../utils/asyncHandler";
+import {
+  handleAsyncError,
+  HttpStatus,
+  sendSuccessResponse,
+  sendValidationError,
+} from "../../utils/responseFormatter";
 
-export const getAnalytics = async (req: any, res: any) => {
+export const getAnalytics = asyncHandler(async (req: any, res: any) => {
   try {
     const userId = req.user.id;
-    const days = req.query.period || "30";
+    const daysParam = req.query.period;
+    const days = Number(daysParam) || 30;
 
-    // Find user's shop
+    if (isNaN(days) || days <= 0 || days > 365) {
+      return sendValidationError(
+        res,
+        "Invalid period. Use a number between 1 and 365."
+      );
+    }
+
     const shop = await db.stationary.findFirst({
       where: { ownerId: userId },
     });
 
     if (!shop) {
-      return res.status(404).json({ message: "Shop not found" });
+      return sendValidationError(res, "Stationary shop not found");
     }
 
-    // Calculate date range
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(days));
+    startDate.setDate(endDate.getDate() - days);
 
-    // Get delivered orders
     const orders = await db.order.findMany({
       where: {
         stationaryId: shop.id,
@@ -29,51 +41,51 @@ export const getAnalytics = async (req: any, res: any) => {
       include: {
         user: { select: { name: true, email: true } },
         OrderItem: true,
+        Commission: true,
       },
+      orderBy: { createdAt: "desc" },
     });
 
-    // Calculate revenue
     const totalRevenue = orders.reduce(
-      (sum, order) => sum + order.totalPrice,
+      (sum, order) =>
+        sum + (order.totalPrice || 0) - (order.Commission?.commissionFee || 0),
       0
     );
-
-    // Count unique customers
     const uniqueCustomers = new Set(orders.map((o) => o.userId)).size;
 
-    // Send response
-    res.json({
-      success: true,
-      data: {
-        overview: {
-          shopName: shop.name,
-          shopStatus: shop.isActive ? "Active" : "Inactive",
-          reportDays: days,
-        },
-        revenue: {
-          total: totalRevenue,
-          formatted: `₹${totalRevenue}`,
-          average: Math.round(totalRevenue / parseInt(days)),
-          orderCount: orders.length,
-        },
-        customers: {
-          total: uniqueCustomers,
-          averageSpend:
-            uniqueCustomers > 0
-              ? Math.round(totalRevenue / uniqueCustomers)
-              : 0,
-        },
-
-        recentOrders: orders.slice(0, 10).map((order) => ({
-          id: order.id,
-          customer: order.user.name,
-          amount: order.totalPrice,
-          date: order.createdAt,
-        })),
+    const analytics = {
+      overview: {
+        shopName: shop.name,
+        shopStatus: shop.isActive ? "Active" : "Inactive",
+        reportDays: days,
       },
-    });
+      revenue: {
+        total: totalRevenue,
+        formatted: `₹${totalRevenue}`,
+        average: orders.length > 0 ? Math.round(totalRevenue / days) : 0,
+        orderCount: orders.length,
+      },
+      customers: {
+        total: uniqueCustomers,
+        averageSpend:
+          uniqueCustomers > 0 ? Math.round(totalRevenue / uniqueCustomers) : 0,
+      },
+      recentOrders: orders.slice(0, 10).map((order) => ({
+        id: order.id,
+        customer: order.user.name,
+        amount: order.totalPrice - (order.Commission?.commissionFee || 0),
+        formattedAmount: `₹${order.totalPrice - (order.Commission?.commissionFee || 0)}`,
+        date: order.createdAt,
+      })),
+    };
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Analytics fetched",
+      analytics
+    );
   } catch (error) {
-    console.error("Analytics error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    return handleAsyncError(res, error, "Error generating analytics");
   }
-};
+});

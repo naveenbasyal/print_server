@@ -37,11 +37,46 @@ export const registerStudent = asyncHandler(async (req: any, res: any) => {
     if (studentExists && studentExists.isVerified) {
       return sendValidationError(res, "Student already exists, please login");
     } else if (studentExists && !studentExists.isVerified) {
-      const result = await sendOTPEmail(email, name);
-      console.log("result", result);
-      return sendValidationError(
+      const result = await db.$transaction(async (tx) => {
+        // Delete any existing OTP for this user
+        await tx.verificationOtp.deleteMany({
+          where: {
+            userId: studentExists.id,
+          },
+        });
+
+        // Send new OTP
+        const sendOtp = await sendOTPEmail(email, name);
+        if (!sendOtp.success || !sendOtp.otp) {
+          throw new Error("Failed to send OTP, please try again later");
+        }
+
+        // Save new OTP to database
+        await tx.verificationOtp.create({
+          data: {
+            id: ulid(),
+            userId: studentExists.id,
+            otp: sendOtp.otp,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          },
+        });
+
+        return {
+          success: true,
+          userId: studentExists.id,
+          email: studentExists.email,
+        };
+      });
+
+      return sendSuccessResponse(
         res,
-        "Student already exists, please verify your account"
+        200,
+        "Student already exists, please verify your account",
+        {
+          userId: result.userId,
+          email: result.email,
+          isVerified: studentExists.isVerified,
+        }
       );
     }
 
@@ -88,6 +123,7 @@ export const registerStudent = asyncHandler(async (req: any, res: any) => {
       {
         userId: result.userId,
         email: result.email,
+        isVerified: false,
       }
     );
   } catch (error: any) {
@@ -171,6 +207,58 @@ export const verifyOtp = asyncHandler(async (req: any, res: any) => {
   }
 });
 
+export const resendOtp = asyncHandler(async (req: any, res: any) => {
+  const { userId } = req.body;
+  if (!userId) {
+    return sendValidationError(res, "User ID is required");
+  }
+  try {
+    const user = await db.user.findFirst({
+      where: {
+        id: userId,
+      },
+      select: {
+        email: true,
+        name: true,
+        isVerified: true,
+      },
+    });
+    if (!user) {
+      return sendNotFoundError(res, "User not found");
+    }
+    if (user.isVerified) {
+      return sendValidationError(res, "User is already verified");
+    }
+    const sendOtp = await sendOTPEmail(user.email, user.name);
+    if (!sendOtp.success || !sendOtp.otp) {
+      return sendInternalServerError(
+        res,
+        "Failed to send OTP, please try again later"
+      );
+    }
+    await db.verificationOtp.updateMany({
+      where: {
+        userId: userId,
+      },
+      data: {
+        otp: sendOtp.otp,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+      },
+    });
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "OTP resent successfully, please check your email",
+      {
+        userId: userId,
+        email: user.email,
+      }
+    );
+  } catch (error) {
+    return handleAsyncError(res, error, "Error resending OTP");
+  }
+});
+
 export const loginStudent = asyncHandler(async (req: any, res: any) => {
   const { email, password } = req.body;
 
@@ -187,14 +275,51 @@ export const loginStudent = asyncHandler(async (req: any, res: any) => {
     });
 
     if (!student) {
-      return sendValidationError(res, "Invalid email or password");
+      return sendValidationError(res, "User not found, please register first");
     }
 
     if (!student.isVerified) {
-      await sendOTPEmail(email, student?.name);
-      return sendValidationError(
+      // FIX: Handle OTP creation for unverified login
+      const result = await db.$transaction(async (tx) => {
+        // Delete any existing OTP for this user
+        await tx.verificationOtp.deleteMany({
+          where: {
+            userId: student.id,
+          },
+        });
+
+        // Send new OTP
+        const sendOtp = await sendOTPEmail(email, student?.name);
+        if (!sendOtp.success || !sendOtp.otp) {
+          throw new Error("Failed to send OTP, please try again later");
+        }
+
+        // Save new OTP to database
+        await tx.verificationOtp.create({
+          data: {
+            id: ulid(),
+            userId: student.id,
+            otp: sendOtp.otp,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          },
+        });
+
+        return {
+          success: true,
+          userId: student.id,
+          email: student.email,
+        };
+      });
+
+      return sendSuccessResponse(
         res,
-        "Your account is not verified, please check your email for the OTP"
+        200,
+        "Your account is not verified, please check your email for the OTP",
+        {
+          userId: result.userId,
+          email: result.email,
+          isVerified: student.isVerified,
+        }
       );
     }
 
