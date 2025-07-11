@@ -157,12 +157,12 @@ export const updateOrderStatus = asyncHandler(async (req: any, res: any) => {
       );
     }
 
-    if (status === "COMPLETED" && order.orderType === "DELIVERY") {
-      return sendValidationError(
-        res,
-        "Mark as OUT_FOR_DELIVERY first for DELIVERY type"
-      );
-    }
+    // if (status === "COMPLETED" && order.orderType === "DELIVERY") {
+    //   return sendValidationError(
+    //     res,
+    //     "Mark as OUT_FOR_DELIVERY first for DELIVERY type"
+    //   );
+    // }
 
     if (status === "DELIVERED") {
       if (!otp) return sendValidationError(res, "OTP is required for delivery");
