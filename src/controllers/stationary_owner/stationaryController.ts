@@ -47,6 +47,7 @@ export const loginStationaryOwner = asyncHandler(async (req: any, res: any) => {
     return sendSuccessResponse(res, HttpStatus.OK, "Login successful", {
       userId: stationaryOwner.id,
       email: stationaryOwner.email,
+      name: stationaryOwner.name,
       token,
     });
   } catch (error: any) {

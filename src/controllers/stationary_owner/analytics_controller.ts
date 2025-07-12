@@ -35,7 +35,7 @@ export const getAnalytics = asyncHandler(async (req: any, res: any) => {
     const orders = await db.order.findMany({
       where: {
         stationaryId: shop.id,
-        status: "DELIVERED",
+
         createdAt: { gte: startDate, lte: endDate },
       },
       include: {
@@ -73,6 +73,7 @@ export const getAnalytics = asyncHandler(async (req: any, res: any) => {
       recentOrders: orders.slice(0, 10).map((order) => ({
         id: order.id,
         customer: order.user.name,
+        email: order.user.email,
         amount: order.totalPrice - (order.Commission?.commissionFee || 0),
         formattedAmount: `₹${order.totalPrice - (order.Commission?.commissionFee || 0)}`,
         date: order.createdAt,
