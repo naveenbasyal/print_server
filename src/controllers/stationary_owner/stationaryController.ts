@@ -9,6 +9,12 @@ import {
   sendSuccessResponse,
   sendValidationError,
 } from "../../utils/responseFormatter";
+import {
+  sendOrderCompletedEmail,
+  sendOrderDeliveredEmail,
+  sendOrderOutForDeliveryEmail,
+} from "../../services/emailServices";
+import { PrismaClientExtends } from "@prisma/client";
 
 export const loginStationaryOwner = asyncHandler(async (req: any, res: any) => {
   try {
@@ -59,69 +65,72 @@ export const getOrders = asyncHandler(async (req: any, res: any) => {
   const userId = req.user.id;
 
   try {
-    return await db.$transaction(async (tx) => {
-      const stationary = await tx.stationary.findFirst({
-        where: { ownerId: userId },
-        select: { id: true },
-      });
+    const stationary = await db.stationary.findFirst({
+      where: { ownerId: userId },
+      select: { id: true },
+    });
 
-      if (!stationary) {
-        return sendValidationError(res, "Stationary is not linked to you");
-      }
+    if (!stationary) {
+      return sendValidationError(res, "Stationary is not linked to you");
+    }
 
-      const orders = await tx.order.findMany({
-        where: { stationaryId: stationary.id },
-        include: {
-          OrderItem: true,
-          college: true,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-            },
-          },
-          Payments: {
-            select: {
-              status: true,
-              createdAt: true,
-            },
-          },
-          Commission: {
-            select: {
-              commissionFee: true,
-              commissionRate: true,
-            },
+    const orders = await db.order.findMany({
+      where: {
+        stationaryId: stationary.id,
+
+        NOT: { status: "PENDING" },
+      },
+      include: {
+        OrderItem: true,
+        college: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
           },
         },
-      });
-
-      const formattedOrders = orders
-        .map((order: any) => ({
-          ...order,
-          totalPrice:
-            order.OrderItem.reduce(
-              (acc: number, item: any) => acc + item.price,
-              0
-            ) - (order.Commission?.commissionFee || 0),
-        }))
-        .sort(
-          (a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()
-        );
-
-      formattedOrders.forEach((order: any) => {
-        delete order.Commission;
-        delete order.otp;
-      });
-
-      return sendSuccessResponse(
-        res,
-        HttpStatus.OK,
-        "Orders fetched",
-        formattedOrders
-      );
+        Payments: {
+          select: {
+            status: true,
+            createdAt: true,
+          },
+          where: {
+            status: "PAID",
+          },
+        },
+        Commission: {
+          select: {
+            commissionFee: true,
+            commissionRate: true,
+          },
+        },
+      },
     });
+
+    const formattedOrders = orders
+      .map((order: any) => ({
+        ...order,
+        totalPrice:
+          order.OrderItem.reduce(
+            (acc: number, item: any) => acc + item.price,
+            0
+          ) - (order.Commission?.commissionFee || 0),
+      }))
+      .sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    formattedOrders.forEach((order: any) => {
+      delete order.Commission;
+      delete order.otp;
+    });
+
+    return sendSuccessResponse(
+      res,
+      HttpStatus.OK,
+      "Orders fetched",
+      formattedOrders
+    );
   } catch (error) {
     return handleAsyncError(res, error, "Error fetching orders");
   }
@@ -143,7 +152,21 @@ export const updateOrderStatus = asyncHandler(async (req: any, res: any) => {
       return sendValidationError(res, "Invalid order status");
     }
 
-    const order = await db.order.findFirst({ where: { id: orderId } });
+    const order = await db.order.findFirst({
+      where: { id: orderId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        OrderItem: true,
+        stationary: true,
+        college: true,
+      },
+    });
 
     if (!order) return sendNotFoundError(res, "Order not found");
 
@@ -175,6 +198,76 @@ export const updateOrderStatus = asyncHandler(async (req: any, res: any) => {
       data: { status },
     });
 
+    /**
+     * orderId: string;
+       customerName: string;
+       customerEmail: string;
+       status: OrderStatusType;
+       orderType: "DELIVERY" | "TAKEAWAY";
+       totalPrice: number;
+       deliveryAddress?: string;
+       deliveryFee?: number;
+       otp: string;
+       createdAt: Date;
+       stationaryName: string;
+       stationaryPhone?: string;
+       stationaryAddress?: string;
+       collegeName: string;
+       items: Array<{
+         name: string;
+         quantity: number;
+         price: number;
+         coloured: boolean;
+         duplex: boolean;
+         spiral: boolean;
+         hardbind: boolean;
+         fileType: string;
+       }>;
+       paymentId?: string;
+     */
+    const formattedOrder = {
+      orderId: order.id,
+      customerName: order.user.name,
+      customerEmail: order.user.email,
+      status: status,
+      orderType: order.orderType,
+      totalPrice: order.totalPrice,
+      deliveryAddress:
+        order.orderType === "DELIVERY" ? order.deliveryAddress : undefined,
+      deliveryFee:
+        order.orderType === "DELIVERY" ? order.deliveryFee : undefined,
+      otp: order.otp,
+      createdAt: order.createdAt,
+      stationaryName: order.stationary.name,
+      stationaryPhone: order.stationary.phone,
+      stationaryAddress: order.stationary.address,
+      collegeName: order.college.name,
+
+      items: order.OrderItem.map((item) => {
+        return {
+          name: item.name,
+          quantity: item.quantity,
+          price: order.totalPrice,
+          coloured: item.coloured,
+          duplex: item.duplex,
+          spiral: item.spiral,
+          hardbind: item.hardbind,
+          fileType: item.fileType,
+        };
+      }),
+      paymentId: order.paymentId,
+    };
+
+    if (status === "COMPLETED" && order.orderType === "TAKEAWAY") {
+      await sendOrderCompletedEmail(order.user.email, formattedOrder);
+    } else if (
+      status === "OUT_FOR_DELIVERY" &&
+      order.orderType === "DELIVERY"
+    ) {
+      await sendOrderOutForDeliveryEmail(order.user.email, formattedOrder);
+    } else if (status === "DELIVERED") {
+      await sendOrderDeliveredEmail(order.user.email, formattedOrder);
+    }
     return sendSuccessResponse(
       res,
       HttpStatus.OK,

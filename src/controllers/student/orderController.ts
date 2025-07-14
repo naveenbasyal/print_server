@@ -14,6 +14,7 @@ import {
   HttpStatus,
 } from "../../utils/responseFormatter";
 import { asyncHandler } from "../../utils/asyncHandler";
+import { RealtimeService } from "../../services/realtimeService";
 
 export const createOrder = asyncHandler(async (req: any, res: any) => {
   const userId = req?.user?.id;
@@ -140,12 +141,6 @@ export const createOrder = asyncHandler(async (req: any, res: any) => {
       },
     });
 
-    await db.cartItem.deleteMany({
-      where: {
-        cartId: cart.id,
-      },
-    });
-
     return sendSuccessResponse(
       res,
       HttpStatus.CREATED,
@@ -227,38 +222,114 @@ export const verifyPayment = asyncHandler(async (req: any, res: any) => {
       const NET_EARNING =
         PLATFORM_FEE + COMMISSION_FEE - razorpayFee - gstOnRzpFee;
 
-      await db.$transaction([
-        db.payments.update({
-          where: { id: payment.id },
-          data: {
-            status: "PAID",
-            paymentId: razorpayPaymentId,
+      const [updatedPayment, updatedOrder, updatedCommision] =
+        await db.$transaction([
+          db.payments.update({
+            where: { id: payment.id },
+            data: {
+              status: "PAID",
+              paymentId: razorpayPaymentId,
+            },
+          }),
+          db.order.update({
+            where: {
+              id: order.id,
+            },
+            data: {
+              status: "ACCEPTED",
+              paymentId: verification.data.id,
+            },
+            include: {
+              OrderItem: true,
+              user: {
+                select: { id: true, name: true, email: true, phone: true },
+              },
+              stationary: {
+                select: { id: true, name: true },
+              },
+            },
+          }),
+          db.commission.create({
+            data: {
+              id: ulid(),
+              orderId: order.id,
+              stationaryId: order.stationaryId,
+              platformFee: PLATFORM_FEE,
+              commissionRate: COMMISSION_RATE,
+              commissionFee: COMMISSION_FEE,
+              razorpayFee,
+              gstOnRzpFee,
+              netEarnings: NET_EARNING,
+              status: "PENDING",
+            },
+          }),
+        ]);
+      // EMIT REAL-TIME EVENT TO STATIONARY OWNER
+      console.log("emitting real time order events...to admin");
+
+      //preparing order format
+      const orders = await db.order.findMany({
+        where: { stationaryId: order.stationaryId, id: order.id },
+        include: {
+          OrderItem: true,
+          college: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+            },
           },
-        }),
-        db.order.update({
-          where: {
-            id: order.id,
+          Payments: {
+            select: {
+              status: true,
+              createdAt: true,
+            },
+            where: {
+              status: "PAID",
+            },
           },
-          data: {
-            status: "ACCEPTED",
-            paymentId: verification.data.id,
+          Commission: {
+            select: {
+              commissionFee: true,
+              commissionRate: true,
+            },
           },
-        }),
-        db.commission.create({
-          data: {
-            id: ulid(),
-            orderId: order.id,
-            stationaryId: order.stationaryId,
-            platformFee: PLATFORM_FEE,
-            commissionRate: COMMISSION_RATE,
-            commissionFee: COMMISSION_FEE,
-            razorpayFee,
-            gstOnRzpFee,
-            netEarnings: NET_EARNING,
-            status: "PENDING",
-          },
-        }),
-      ]);
+        },
+      });
+
+      const formattedOrders = orders
+        .map((o: any) => ({
+          ...o,
+          totalPrice:
+            o.OrderItem.reduce(
+              (acc: number, item: any) => acc + item.price,
+              0
+            ) - (o.Commission?.commissionFee || 0),
+        }))
+        .sort(
+          (a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime()
+        );
+
+      formattedOrders.forEach((order: any) => {
+        delete order.Commission;
+        delete order.otp;
+      });
+      await db.cartItem.deleteMany({
+        where: {
+          cartId: order.cartId,
+        },
+      });
+      RealtimeService.emitNewOrder(order.stationaryId, formattedOrders[0]);
+      console.log("emitting real time payment events...to admin");
+
+      // // EMIT PAYMENT CONFIRMATION
+      // RealtimeService.emitPaymentConfirmed(order.stationaryId, {
+      //   orderId: updatedOrder.id,
+      //   amount: updatedOrder.totalPrice,
+      //   paymentId: verification.data.id,
+      // });
     }
 
     const statusCode = verification?.success
@@ -358,10 +429,20 @@ export const getOrders = asyncHandler(async (req: any, res: any) => {
     const orders = await db.order.findMany({
       where: {
         userId,
+        NOT: { status: "PENDING" },
       },
+
       include: {
         OrderItem: true,
         stationary: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
         Commission: {
           select: {
             platformFee: true,
