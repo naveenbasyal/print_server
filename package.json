@@ -14,7 +14,8 @@
   },
   "scripts": {
     "dev": "nodemon src/server.ts",
-    "build": "tsc",
+    "build": "tsc && npm run copy:prisma",
+    "copy:prisma": "cp -r src/generated dist/generated",
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
