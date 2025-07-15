@@ -569,6 +569,7 @@ export const getMyStationaries = asyncHandler(async (req: any, res: any) => {
     const stationaries = await db.stationary.findMany({
       where: {
         collegeId: user?.collegeId,
+        isActive: true,
       },
       orderBy: {
         createdAt: "desc",
