@@ -37,7 +37,7 @@ const sendEmail = async (
     );
 
     const mailOptions = {
-      from: `"Printify" <${process.env.EMAIL_USER}>`,
+      from: `"Walldeed" <${process.env.EMAIL_USER}>`,
       to: recipientEmail,
       subject: subject,
       html: content,
@@ -71,7 +71,7 @@ const createOTPEmailTemplate = (
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Printify Verification Code</title>
+    <title>Walldeed Verification Code</title>
     <!--[if mso]>
     <noscript>
         <xml>
@@ -112,7 +112,7 @@ const createOTPEmailTemplate = (
                         <td style="background: linear-gradient(135deg, #5588ff 0%, #3366ff 100%); padding: 40px 0; text-align: center; position: relative;">
                             <div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #3366ff, #3366ff, #3366ff);"></div>
                             <div style="color: #ffffff; font-size: 32px; font-weight: 700; letter-spacing: 2px; margin-bottom: 8px;">
-                                PRINTIFY
+                                Walldeed
                             </div>
                             <div style="color: #c7d2fe; font-size: 15px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px;">
                                 Print on Demand Platform
@@ -140,7 +140,7 @@ const createOTPEmailTemplate = (
                             </p>
                             
                             <p style="margin: 0 0 32px 0; color: #475569; font-size: 16px; line-height: 1.7;" class="mobile-text">
-                                Welcome to Printify! To complete your account setup and start building your print-on-demand business, please verify your email address using the verification code below.
+                                Welcome to Walldeed! To complete your account setup and start building your print-on-demand business, please verify your email address using the verification code below.
                             </p>
                             
                             <!-- OTP Container -->
@@ -175,7 +175,7 @@ const createOTPEmailTemplate = (
                                     How to use this code:
                                 </p>
                                 <p style="margin: 0; color: #0369a1; font-size: 14px; line-height: 1.6; padding-left: 26px;">
-                                    Return to the Printify sign-up page and enter the verification code exactly as shown above to complete your account setup.
+                                    Return to the Walldeed sign-up page and enter the verification code exactly as shown above to complete your account setup.
                                 </p>
                             </div>
                             
@@ -198,7 +198,7 @@ const createOTPEmailTemplate = (
                                 <tr>
                                     <td align="center">
                                         <p style="margin: 0 0 16px 0; color: #64748b; font-size: 14px; font-weight: 500;">
-                                            © 2025 Printify, Inc. All rights reserved.
+                                            © 2025 Walldeed, Inc. All rights reserved.
                                         </p>
                                         <p style="margin: 0; color: #94a3b8; font-size: 13px; line-height: 1.5;">
                                             This email was sent to verify your account. 
@@ -229,7 +229,7 @@ const sendOTPEmail = async (
     name = "there";
   }
   const otp = generateOTP();
-  const subject = "Your Printify Verification Code";
+  const subject = "Your Walldeed Verification Code";
   const content = createOTPEmailTemplate(otp, name);
 
   const success = await sendEmail(email, subject, content);
@@ -414,7 +414,7 @@ const createOrderStatusEmailTemplate = (orderInfo: OrderEmailInfo): string => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Order Status Update - Printify</title>
+        <title>Order Status Update - Walldeed</title>
         <style>
             @media only screen and (max-width: 600px) {
                 .container {
@@ -453,7 +453,7 @@ const createOrderStatusEmailTemplate = (orderInfo: OrderEmailInfo): string => {
                             <td style="background: linear-gradient(135deg, #5588ff 0%, #3366ff 100%); padding: 40px 0; text-align: center; position: relative;">
                                 <div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #3366ff, #3366ff, #3366ff);"></div>
                                 <div style="color: #ffffff; font-size: 32px; font-weight: 700; letter-spacing: 2px; margin-bottom: 8px;">
-                                    PRINTIFY
+                                    Walldeed
                                 </div>
                                 <div style="color: #c7d2fe; font-size: 15px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px;">
                                     Order Status Update
@@ -639,7 +639,7 @@ const createOrderStatusEmailTemplate = (orderInfo: OrderEmailInfo): string => {
                                     <tr>
                                         <td align="center">
                                             <p style="margin: 0 0 16px 0; color: #64748b; font-size: 14px; font-weight: 500;">
-                                                © 2025 Printify, Inc. All rights reserved.
+                                                © 2025 Walldeed, Inc. All rights reserved.
                                             </p>
                                             <p style="margin: 0; color: #94a3b8; font-size: 13px; line-height: 1.5;">
                                                 This email was sent to update you about your order status.
